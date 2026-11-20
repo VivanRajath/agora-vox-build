@@ -1,5 +1,6 @@
 # Render blueprint: New + > Blueprint > pick this repo.
 # Secrets marked sync: false are asked for once in the Render dashboard.
+# PUBLIC_BASE_URL is not needed here: Render sets RENDER_EXTERNAL_URL, which the backend uses.
 services:
   - type: web
     name: vox-build
@@ -23,6 +24,8 @@ services:
         value: en-IN
       - key: ASR_LANGUAGE
         value: en-US
+      - key: VOX_LLM_TIER
+        value: jnr
       - key: TOOL_SECRET
         generateValue: true
       - key: ANTHROPIC_API_KEY

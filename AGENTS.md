@@ -5,7 +5,8 @@
 ```
 Vox (Agora Conversational AI + Murf)  ── agents/vox/SOUL.md, backend/vox_llm.py
 │   Talks to the user, calls tools (backend/vox_tools.py):
-│   generate_site · edit_site · undo_change · describe_site · check_progress
+│   plan_site · build_site · edit_site · undo_change · describe_site ·
+│   check_progress · publish_site · publication_status
 │
 └── vox-build backend (orchestrator)  ── backend/main.py
     │
@@ -19,15 +20,21 @@ Vox (Agora Conversational AI + Murf)  ── agents/vox/SOUL.md, backend/vox_llm
     │     Headline, calls to action and section copy in the brief's tone
     │
     ├── design-critic ────────────── backend/editor/engine.py (_review)
-    │     Reviews each new page against the design principles, patches the worst issues
+    │     Reviews each new site against the design principles, patches the worst issues
     │
     ├── intent-router ────────────── backend/editor/router.py
     │     Classifies a spoken edit → tier
     │
+    ├── builder ──────────────────── backend/builder.py (not an LLM)
+    │     esbuild + Tailwind build; a failed build escalates the edit
+    │
+    ├── publisher ────────────────── backend/publish.py (not an LLM)
+    │     GitHub main + gh-pages, Pages enabled, waits until the URL is live
+    │
     └── code-editor ──────────────── backend/editor/engine.py
-        ├── jnr-developer ────────── Tier jnr: small visual tweaks (fast model, patches)
-        ├── snr-developer ────────── Tier snr: sections & features (standard model, patches)
-        └── architect ────────────── Tier architect: redesigns & fallback (top model, full rewrite)
+        ├── jnr-developer ────────── Tier jnr: small visual tweaks (fast model, multi-file patches)
+        ├── snr-developer ────────── Tier snr: sections, features, build fixes (standard model, patches)
+        └── architect ────────────── Tier architect: new sites, redesigns & fallback (top model, every file)
 ```
 
 The personas in `agents/*/SOUL.md` and `agents/code-editor/agents/*/SOUL.md`
@@ -44,13 +51,18 @@ Every builder also gets the shared `DESIGN_PRINCIPLES` in `backend/editor/prompt
 
 | Tool | Params | Returns |
 |---|---|---|
-| generate_site | description | `{status, message}` |
-| edit_site | instruction | `{status, message}` |
-| undo_change | none | `{status, message}` |
-| describe_site | none | `{status, message}` |
-| check_progress | none | `{status, message}` for the latest background job |
+| plan_site | description | `needs_approval` + the spoken plan (brief stored as a draft) |
+| build_site | changes? | `done` / `in_progress` |
+| edit_site | instruction | `done` / `in_progress` / `failed` |
+| undo_change | none | `done` / `failed` |
+| describe_site | none | `done` + sections in order |
+| check_progress | none | the latest job's state |
+| publish_site | repo_name?, confirmed | `needs_approval` / `name_taken` (+ options) / `needs_github` / `in_progress` |
+| publication_status | none | `in_progress` / `done` + URL / `failed` |
 
-`status` is `done`, `in_progress` (finishes in the background, preview updates via SSE) or `failed`.
+**Rules** (in its SOUL.md): plan before building and wait for approval; never publish without an explicit yes (and the server enforces it); on failure say what happened and offer the next option; after every action say what changed.
+
+`in_progress` jobs finish in the background; the preview updates via SSE.
 
 ## researcher
 
@@ -93,14 +105,14 @@ Every builder also gets the shared `DESIGN_PRINCIPLES` in `backend/editor/prompt
 
 ## code-editor
 
-**Input:** instruction + current index.html + optional selected element + tier
-**Output:** a new committed version with a one-sentence spoken summary
+**Input:** instruction + file tree + only the relevant files of the React project + optional selected element (with its `data-vox-id`) + tier
+**Output:** a new committed, built version with a one-sentence spoken summary
 
-| Sub-agent | Default model (Anthropic) | Output | On failure |
+| Sub-agent | Default model (Anthropic) | Output | On failure (parse, apply or build) |
 |---|---|---|---|
-| jnr-developer | claude-haiku-5-5 | SEARCH/REPLACE patches | escalate to snr |
-| snr-developer | claude-sonnet-5-5 | SEARCH/REPLACE patches | escalate to architect |
-| architect | claude-opus-5-5 | full index.html | report failure |
+| jnr-developer | claude-haiku-5-5 | FILE / NEW FILE / DELETE FILE patches | escalate to snr with the error |
+| snr-developer | claude-sonnet-5-5 | FILE / NEW FILE / DELETE FILE patches | escalate to architect with the error |
+| architect | claude-opus-5-5 | every LLM-owned file | report failure |
 
 OpenAI and Gemini equivalents are in `backend/config.py`.
 
@@ -114,9 +126,12 @@ original repo-sandbox-agent. It is not used by the voice runtime.
 ```
 Spoken request
     │
-    ├── new website ───────> generate_site ──> researcher ──> font-knight + copywriter + photos ──> architect ──> design-critic
-    ├── change ────────────> edit_site ──> [researcher if photos] ──> intent-router ──> jnr | snr | architect
-    │                                                       (escalates on failure)
+    ├── new website ───────> plan_site ──> researcher ──> spoken plan ──> (user approves or changes)
+    │                        build_site ──> font-knight + copywriter + photos ──> architect ──> design-critic ──> build
+    ├── change ────────────> edit_site ──> [researcher if photos] ──> intent-router ──> jnr | snr | architect ──> build
+    │                                                       (escalates on patch or build failure)
     ├── undo ──────────────> undo_change ──> store.undo
-    └── "what's on it?" ───> describe_site ──> HTML outline (no LLM)
+    ├── "what's on it?" ───> describe_site ──> App.jsx section order (no LLM)
+    └── "put it online" ───> publish_site ──> needs_approval ──> (user says yes) ──> publish_site(confirmed)
+                             ──> GitHub main + gh-pages + Pages ──> publication_status ──> URL + QR code
 ```

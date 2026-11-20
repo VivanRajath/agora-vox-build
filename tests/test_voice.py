@@ -120,3 +120,15 @@ def test_speakable():
 def test_typed_undo(text, tool):
     meta = store.create()
     assert vox_tools.typed_tool(meta["id"], text)[0] == tool
+
+
+def test_anthropic_history_conversion():
+    msgs = llm._anthropic_messages([
+        {"role": "assistant", "content": "Hi, I'm Vox."},
+        {"role": "user", "content": "plan a bakery"},
+        {"role": "assistant", "content": "Sure.", "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "plan_site", "arguments": '{"description": "bakery"}'}}]},
+        {"role": "tool", "tool_call_id": "t1", "content": '{"status": "needs_approval"}'},
+    ])
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant", "user"]
+    assert msgs[3]["content"][1] == {"type": "tool_use", "id": "t1", "name": "plan_site", "input": {"description": "bakery"}}
+    assert msgs[4]["content"][0]["type"] == "tool_result"

@@ -1,0 +1,29 @@
+spec_version: "0.1.0"
+name: vox
+version: 1.0.0
+description: >
+  The voice agent users talk to. Runs on Agora Conversational AI (ARES ASR,
+  Murf Falcon TTS) with our OpenAI-compatible /llm endpoint as its brain.
+  Plans the site with the user, builds it after approval, refines it, and
+  publishes it to GitHub Pages only after an explicit yes.
+
+model:
+  preferred: "anthropic:claude-haiku-5-5"   # VOX_LLM_TIER (default jnr)
+  fallback: ["groq:qwen/qwen3.8-27b", "openai:gpt-4.1-mini"]
+
+runtime:
+  platform: agora-conversational-ai
+  asr: ares
+  tts: murf-falcon
+  llm_endpoint: /llm/{project_id}/chat/completions
+  prompt: agents/vox/SOUL.md
+
+tools:
+  - plan_site
+  - build_site
+  - edit_site
+  - undo_change
+  - describe_site
+  - check_progress
+  - publish_site        # human in the loop: needs_approval, then confirmed: true
+  - publication_status
