@@ -9,6 +9,7 @@ import AccountMenu from "./components/AccountMenu.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import GitHubModal from "./components/GitHubModal.jsx";
 import Composer from "./components/Composer.jsx";
+import LiveCard from "./components/LiveCard.jsx";
 import { DownloadIcon, GitHubIcon, LinkIcon, Logo, SettingsIcon } from "./components/icons.jsx";
 
 const TIER_LABEL = {
@@ -22,14 +23,26 @@ const TIER_LABEL = {
 };
 const AGENT_LABEL = { fontknight: "Font Knight", copywriter: "Copywriter", critic: "Design critic" };
 const TOOL_LABEL = {
-  generate_site: "Building the site",
+  plan_site: "Planning",
+  build_site: "Building the site",
+  publish_site: "Publishing",
+  publication_status: "Checking the live site",
   edit_site: "Editing the site",
   undo_change: "Undoing",
   describe_site: "Reading the page",
   check_progress: "Checking progress",
   build: "Build",
 };
-const TOOL_STATUS = { started: "started", done: "done", in_progress: "running in the background", failed: "failed" };
+const TOOL_STATUS = {
+  started: "started",
+  done: "done",
+  in_progress: "running in the background",
+  failed: "failed",
+  needs_approval: "waiting for your approval",
+  name_taken: "name taken",
+  needs_github: "needs GitHub",
+};
+const repoName = (full) => (full || "").split("/").pop();
 
 function useProjectId() {
   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get("p"));
@@ -79,11 +92,22 @@ export default function App() {
   const [dialog, setDialog] = useState(null); // "settings" | "github"
   const [tab, setTab] = useState("activity");
   const [copied, setCopied] = useState(false);
+  const [githubNeeded, setGithubNeeded] = useState(false);
   const nextId = useRef(1);
 
   const addLog = useCallback((entry) => {
     setLog((prev) => [...prev.slice(-80), { id: nextId.current++, ts: Date.now(), ...entry }]);
   }, []);
+
+  // Buttons on an activity entry (build the plan, approve publishing, pick a repo name). One click resolves it.
+  const runAction = useCallback(async (entryId, action) => {
+    setLog((prev) => prev.map((e) => (e.id === entryId ? { ...e, resolved: action.label } : e)));
+    try {
+      await action.run();
+    } catch (err) {
+      addLog({ kind: "error", text: err.message });
+    }
+  }, [addLog]);
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setConfig({ voice_enabled: false, llm_provider: "none" }));
@@ -134,6 +158,52 @@ export default function App() {
         case "job_failed":
           setBusy(null);
           addLog({ kind: "error", text: ev.reason });
+          break;
+        case "job_planned":
+          setBusy(null);
+          break;
+        case "plan":
+          setMeta((m) => ({ ...m, draft: { spoken: ev.spoken } }));
+          addLog({
+            kind: "plan",
+            who: "Plan",
+            text: ev.spoken,
+            palette: ev.brief?.palette,
+            actions: [{ label: "Build it", primary: true, run: () => api.command(projectId, "build it") }],
+          });
+          break;
+        case "approval":
+          if (ev.state === "needs_approval") {
+            addLog({
+              kind: "approval",
+              who: "Needs your OK",
+              text: ev.message,
+              actions: [
+                { label: "Publish", primary: true, run: () => api.publish(projectId, { repo_name: repoName(ev.repo), confirmed: true }) },
+                { label: "Not now", run: async () => {} },
+              ],
+            });
+          } else if (ev.state === "name_taken") {
+            addLog({
+              kind: "approval",
+              who: "Name taken",
+              text: `You already have ${ev.repo}. Pick another name:`,
+              actions: (ev.options || []).map((name) => ({ label: name, run: () => api.publish(projectId, { repo_name: name, confirmed: false }) })),
+            });
+          }
+          break;
+        case "needs_github":
+          setGithubNeeded(true);
+          addLog({ kind: "error", who: "Publishing", text: "Connect GitHub to put the site online, or download the ZIP." });
+          break;
+        case "publish":
+          setMeta((m) => ({ ...m, publish: ev }));
+          if (ev.state === "failed") addLog({ kind: "error", who: "Publishing", text: ev.reason });
+          break;
+        case "published":
+          setGithubNeeded(false);
+          setMeta((m) => ({ ...m, published: { url: ev.url, repo: ev.repo, version: ev.version }, publish: { state: "live" } }));
+          addLog({ kind: "done", who: "Live", text: `Your site is live at ${ev.url}` });
           break;
         case "version":
           setMeta((m) => ({ ...m, current: ev.current, versions: ev.versions }));
@@ -224,8 +294,19 @@ export default function App() {
           <a className="btn quiet" href={api.downloadUrl(projectId)} download title="Download the site as a ZIP">
             <DownloadIcon /> <span className="hide-sm">Download ZIP</span>
           </a>
-          <button className="btn primary" onClick={() => setDialog("github")}>
-            <GitHubIcon /> <span>Push to GitHub</span>
+          <button
+            className={`btn quiet ${githubNeeded ? "is-attention" : ""}`}
+            onClick={() => (githubNeeded && !user?.github && config?.auth?.github ? (location.href = api.loginUrl("github")) : setDialog("github"))}
+            title="Connect GitHub or push the source"
+          >
+            <GitHubIcon /> <span className="hide-sm">{githubNeeded && !user?.github ? "Connect GitHub" : "GitHub"}</span>
+          </button>
+          <button
+            className="btn primary"
+            disabled={isBlank}
+            onClick={() => api.publish(projectId, { confirmed: false }).catch((e) => addLog({ kind: "error", text: e.message }))}
+          >
+            <span>{meta.published?.url ? "Republish" : "Put it online"}</span>
           </button>
           <button className="btn quiet" onClick={() => setDialog("settings")} title="API keys, models and photos">
             <SettingsIcon /> <span className="hide-sm">Settings</span>
@@ -280,6 +361,8 @@ export default function App() {
             isBlank={isBlank}
           />
 
+          <LiveCard publish={meta.publish} published={meta.published} current={meta.current} />
+
           <div className="tabs" role="tablist" aria-label="Sidebar">
             {[["activity", "Activity"], ["versions", `Versions (${meta.versions.length})`]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "is-on" : ""} onClick={() => setTab(id)}>
@@ -289,7 +372,7 @@ export default function App() {
           </div>
           <div className="tab-panel" role="tabpanel">
             {tab === "activity" ? (
-              <ActivityLog entries={log} tierLabel={TIER_LABEL} isBlank={isBlank} />
+              <ActivityLog entries={log} tierLabel={TIER_LABEL} isBlank={isBlank} onAction={runAction} />
             ) : (
               <History
                 versions={meta.versions}

@@ -266,3 +266,33 @@ def test_zip_is_a_runnable_vite_project(monkeypatch, fake_team):
     assert {"package.json", "vite.config.js", "index.html", "src/main.jsx", "src/App.jsx", "README.md"} <= names
     preview = TestClient(app).get(f"/preview/{meta['id']}/")
     assert preview.status_code == 200 and "preview-inject.js" in preview.text and "bundle.js" in preview.text
+
+
+@needs_tools
+def test_plan_then_build_uses_the_approved_brief(monkeypatch, fake_team):
+    from backend import vox_tools
+    from backend.editor import research
+
+    pid = store.create()["id"]
+    _fake_llm(monkeypatch, {"architect": ARCHITECT_OUTPUT}, [])
+    planned = asyncio.run(vox_tools.plan_site(pid, {"description": "Sweet Crumbs, a bakery in Indiranagar"}))
+    assert planned["status"] == "needs_approval"
+    assert "Sweet Crumbs" in planned["message"] and "Shall I build it" in planned["message"]
+    assert store.load_meta(pid)["draft"]["brief"]["business"] == "Sweet Crumbs"
+
+    async def no_research(description):
+        raise AssertionError("the approved brief should be reused")
+
+    monkeypatch.setattr(research, "brief", no_research)
+    built = asyncio.run(vox_tools.build_site(pid, {}))
+    assert built["status"] == "done", built
+    meta = store.load_meta(pid)
+    assert meta["current"] == 1 and not meta.get("draft")
+
+
+def test_spoken_plan_names_colours():
+    from backend.editor import research
+
+    text = research.spoken_plan({"business": "Sweet Crumbs", "style": {"direction": "warm editorial"},
+                                 "sections": [{"id": "hero"}, {"id": "custom-cakes"}], "palette": {"background": "#fdf3e1", "primary": "#5a3825", "accent": "#c2185b"}})
+    assert "warm editorial" in text and "custom cakes" in text and "#" not in text

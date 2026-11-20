@@ -29,6 +29,8 @@ def _track(project_id: str, event: dict) -> None:
         _jobs[project_id]["stage"] = event.get("tier")
     elif kind == "job_done":
         _jobs[project_id].update(state="done", summary=event["version"].get("summary", ""))
+    elif kind == "job_planned":
+        _jobs[project_id].update(state="planned", summary=event.get("summary", ""))
     elif kind == "job_failed":
         _jobs[project_id].update(state="failed", reason=event.get("reason", ""))
 

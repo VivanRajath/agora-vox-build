@@ -1,7 +1,8 @@
-"""Pushes a site to a GitHub repository as one commit (Git Data API).
+"""GitHub: pushes a site as one commit per branch (Git Data API) and serves it with Pages.
 
-The repo is created if it doesn't exist. Each push makes the repo's default
-branch match the site exactly: blobs -> tree (no base) -> commit -> move ref.
+The repo is created if it doesn't exist. Each push makes a branch match the
+files exactly: blobs -> tree (no base) -> commit -> move ref. publish.py pushes
+the source to the default branch and the built site to gh-pages.
 """
 import asyncio
 import base64
@@ -14,7 +15,13 @@ REPO_RE = re.compile(r"^(?:([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/)?([A-Za-z0-9._-]
 
 
 class GitHubError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+    @property
+    def transient(self) -> bool:
+        return self.status >= 500 or self.status in (0, 429)
 
 
 def parse_repo(value: str) -> tuple[str | None, str]:
@@ -32,14 +39,78 @@ def _check(r: httpx.Response) -> dict:
             message = r.text[:200]
         if r.status_code == 401:
             message = "GitHub access expired. Connect GitHub again."
-        raise GitHubError(f"GitHub: {message} ({r.status_code})")
+        raise GitHubError(f"GitHub: {message} ({r.status_code})", r.status_code)
     return r.json() if r.content else {}
+
+
+def _headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+
+
+def client(token: str) -> httpx.AsyncClient:
+    return httpx.AsyncClient(base_url=API, headers=_headers(token), timeout=60)
+
+
+async def login(token: str) -> str:
+    async with client(token) as gh:
+        return _check(await gh.get("/user"))["login"]
+
+
+async def repo_exists(token: str, owner: str, name: str) -> bool:
+    async with client(token) as gh:
+        r = await gh.get(f"/repos/{owner}/{name}")
+    if r.status_code == 404:
+        return False
+    _check(r)
+    return True
+
+
+async def push_branch(token: str, full: str, branch: str, files: dict[str, bytes], message: str) -> str:
+    """Makes `branch` contain exactly `files` as one new commit (creating the branch if needed,
+    as an orphan so it shares no history with main). Returns the commit sha."""
+    async with client(token) as gh:
+        parent = await _head(gh, full, branch)
+        limit = asyncio.Semaphore(6)
+
+        async def blob(path: str, data: bytes) -> dict:
+            async with limit:
+                sha = _check(await gh.post(f"/repos/{full}/git/blobs", json={"content": base64.b64encode(data).decode(), "encoding": "base64"}))["sha"]
+            return {"path": path, "mode": "100644", "type": "blob", "sha": sha}
+
+        tree = await asyncio.gather(*(blob(p, d) for p, d in files.items()))
+        tree_sha = _check(await gh.post(f"/repos/{full}/git/trees", json={"tree": tree}))["sha"]
+        commit = _check(await gh.post(f"/repos/{full}/git/commits", json={"message": message, "tree": tree_sha, "parents": [parent] if parent else []}))
+        if parent:
+            _check(await gh.patch(f"/repos/{full}/git/refs/heads/{branch}", json={"sha": commit["sha"], "force": True}))
+        else:
+            _check(await gh.post(f"/repos/{full}/git/refs", json={"ref": f"refs/heads/{branch}", "sha": commit["sha"]}))
+    return commit["sha"]
+
+
+async def enable_pages(token: str, full: str, branch: str = "gh-pages") -> str:
+    """Serves `branch` with GitHub Pages; returns the site URL."""
+    source = {"source": {"branch": branch, "path": "/"}}
+    async with client(token) as gh:
+        r = await gh.post(f"/repos/{full}/pages", json=source)
+        if r.status_code == 409:  # already enabled: make sure it serves the right branch
+            _check(await gh.put(f"/repos/{full}/pages", json=source))
+            r = await gh.get(f"/repos/{full}/pages")
+        info = _check(r)
+    return info.get("html_url") or ""
+
+
+async def pages_status(token: str, full: str) -> str:
+    """Latest Pages build: built, building, queued, errored, or unknown."""
+    async with client(token) as gh:
+        r = await gh.get(f"/repos/{full}/pages/builds/latest")
+    if r.status_code == 404:
+        return "queued"
+    return _check(r).get("status") or "unknown"
 
 
 async def push(token: str, repo: str, files: dict[str, bytes], message: str, private: bool, description: str) -> dict:
     owner, name = parse_repo(repo)
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
-    async with httpx.AsyncClient(base_url=API, headers=headers, timeout=60) as gh:
+    async with client(token) as gh:
         login = _check(await gh.get("/user"))["login"]
         owner = owner or login
         r = await gh.get(f"/repos/{owner}/{name}")

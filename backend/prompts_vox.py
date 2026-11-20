@@ -39,9 +39,17 @@ def state(project_id: str) -> str:
         lines.append(f"- Latest job ({job.get('instruction', '')[:80]}): {job['state']} {detail}".rstrip())
     if meta.get("selection"):
         lines.append(f"- The user has clicked {meta['selection'].get('label', 'an element')} in the preview, so 'this' means that element.")
+    publishing = meta.get("publish") or {}
+    if publishing.get("state") in ("pushing", "deploying", "checking"):
+        lines.append(f"- Publishing to GitHub Pages is in progress ({publishing['state']}); use publication_status.")
+    elif publishing.get("state") == "failed":
+        lines.append(f"- The last publish failed: {publishing.get('reason', '')}")
+    if (meta.get("publish_approval") or {}).get("repo"):
+        lines.append(f"- You asked the user to approve publishing to {meta['publish_approval']['repo']}; waiting for a clear yes.")
     published = meta.get("published") or {}
     if published.get("url"):
-        lines.append(f"- Published at {published['url']} (version {published.get('version', '?')}).")
+        stale = published.get("version") != meta["current"]
+        lines.append(f"- Published at {published['url']} (version {published.get('version', '?')})" + (", with unpublished changes since." if stale else "."))
     owner = users.get(meta.get("owner"))
     lines.append(f"- GitHub is {'connected' if users.github_token(owner) else 'not connected'}.")
     return "\n".join(lines)

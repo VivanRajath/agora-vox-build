@@ -95,6 +95,18 @@ async def typed_command(project_id: str, request: Request):
     return JSONResponse({"accepted": True}, status_code=202)
 
 
+@app.post("/api/projects/{project_id}/publish")
+async def publish_site(project_id: str, request: Request):
+    """The approval card's buttons. Same tool and same server-side approval check as voice."""
+    meta = _require_project(project_id)
+    _claim(request, meta)
+    body = await request.json()
+    args = {"confirmed": body.get("confirmed") is True}
+    if body.get("repo_name"):
+        args["repo_name"] = str(body["repo_name"])
+    return await vox_tools.run(project_id, "publish_site", args)
+
+
 @app.post("/api/projects/{project_id}/undo")
 async def undo(project_id: str):
     _require_project(project_id)

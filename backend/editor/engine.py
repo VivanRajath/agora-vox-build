@@ -59,11 +59,12 @@ async def plan(project_id: str, description: str) -> dict:
         brief = await research.brief(description)
         if not brief:
             return _fail(project_id, description, "The researcher couldn't plan the site. The AI model may be busy")
-        store.update(project_id, draft={"description": description, "brief": brief, "spoken": research.spoken_plan(brief)})
+        spoken = research.spoken_plan(brief)
+        store.update(project_id, draft={"description": description, "brief": brief, "spoken": spoken})
         _publish_research(project_id, brief, [])
-        events.publish(project_id, {"type": "plan", "brief": _brief_card(brief)})
-        events.publish(project_id, {"type": "job_planned"})
-        return {"ok": True, "message": research.spoken_plan(brief), "brief": brief}
+        events.publish(project_id, {"type": "plan", "brief": _brief_card(brief), "spoken": spoken})
+        events.publish(project_id, {"type": "job_planned", "summary": spoken})
+        return {"ok": True, "message": spoken, "brief": brief}
 
 
 async def generate(project_id: str, description: str, brief: dict | None = None) -> dict:
