@@ -62,10 +62,18 @@
     e.stopPropagation();
     selected = e.target;
     show(selected);
+    // The React component that rendered it, so the editor knows which file to open.
+    var owner = selected.closest ? selected.closest("[data-vox-id]") : null;
+    var voxId = owner ? owner.getAttribute("data-vox-id") : null;
     parent.postMessage({
       source: "vox-build",
       type: "select",
-      selection: { path: cssPath(selected), html: selected.outerHTML.slice(0, 4000), label: label(selected) },
+      selection: {
+        path: cssPath(selected),
+        html: selected.outerHTML.slice(0, 4000),
+        label: label(selected) + (voxId ? " in " + voxId : ""),
+        vox_id: voxId,
+      },
     }, "*");
   }, true);
 

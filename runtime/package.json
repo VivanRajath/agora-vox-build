@@ -1,0 +1,12 @@
+{
+  "name": "vox-build-site-runtime",
+  "private": true,
+  "description": "Shared, pinned dependencies every generated site is bundled against (no npm install per project).",
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "framer-motion": "11.18.2",
+    "lucide-react": "1.52.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

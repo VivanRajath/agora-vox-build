@@ -19,9 +19,9 @@ from .research import parse_json
 log = logging.getLogger("vox-build.fontknight")
 
 CATALOG_URL = "https://fonts.google.com/metadata/fonts"
+# Matches lucide-react in runtime/package.json and site_template.DEPENDENCIES.
 LUCIDE_VERSION = "1.52.0"
 LUCIDE_TAGS_URL = f"https://unpkg.com/lucide-static@{LUCIDE_VERSION}/tags.json"
-LUCIDE_SCRIPT = f"https://unpkg.com/lucide@{LUCIDE_VERSION}/dist/umd/lucide.min.js"
 CACHE_DIR = config.DATA_DIR.parent / "cache"
 
 # The faces every generated site defaults to. Kept off the shortlist so pages stop looking alike.
@@ -60,7 +60,7 @@ _lock = asyncio.Lock()
 
 
 async def pick(brief: dict, description: str) -> dict:
-    """Returns {heading, body, link, css, reason, icons: [{concept, name}], icon_script}."""
+    """Returns {heading, body, link, css, reason, icons: [{concept, name}]}."""
     catalog, icons = await _load()
     system = (
         f"{prompts.soul('fontknight')}\n\n"
@@ -96,22 +96,27 @@ async def pick(brief: dict, description: str) -> dict:
             "body": f"'{body}', {CSS_FALLBACK.get((catalog or {}).get(body, {}).get('category'), 'sans-serif')}",
         },
         "icons": picked_icons,
-        "icon_script": LUCIDE_SCRIPT if picked_icons else "",
     }
+
+
+def react_icon(name: str) -> str:
+    """Lucide's kebab-case name -> its lucide-react export ("map-pin" -> "MapPin")."""
+    return "".join(part[:1].upper() + part[1:] for part in name.split("-"))
 
 
 def notes_for_prompt(picked: dict) -> str:
     lines = [
         "Typography and icons from font-knight (use exactly these, do not substitute):",
-        f'- Load: <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="{picked["link"]}" rel="stylesheet">',
-        f"- Tailwind fontFamily: display: [{picked['css']['heading']}] for headings, sans: [{picked['css']['body']}] for everything else.",
+        "- The fonts are already loaded by index.html (Google Fonts link). Wire them in the @theme block of src/index.css:",
+        f"  --font-display: {picked['css']['heading']}; (headings, class font-display)",
+        f"  --font-sans: {picked['css']['body']}; (everything else, class font-sans)",
     ]
     if picked.get("icons"):
-        names = ", ".join(f'{i["name"]} ({i["concept"]})' for i in picked["icons"])
+        names = ", ".join(f'{react_icon(i["name"])} ({i["concept"]})' for i in picked["icons"])
         lines += [
-            f'- Icons are Lucide: add <script src="{picked["icon_script"]}"></script> in <head>, write icons as '
-            '<i data-lucide="name" class="w-5 h-5" aria-hidden="true"></i>, and call lucide.createIcons() in the inline script at the end of <body>.',
-            f"- Only these icon names exist for this site: {names}.",
+            '- Icons come from lucide-react as named imports, e.g. import { MapPin, Clock } from "lucide-react"; '
+            'then <MapPin className="w-5 h-5" aria-hidden="true" />.',
+            f"- Only these icons exist for this site: {names}.",
             "- Lucide has no brand logos: for Instagram, Facebook or WhatsApp use a small inline SVG or a plain text link.",
         ]
     return "\n".join(lines)

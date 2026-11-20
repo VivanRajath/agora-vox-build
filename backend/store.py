@@ -1,9 +1,10 @@
 """On-disk project store with linear version history.
 
 data/projects/<id>/
-  meta.json        id, created, versions[], current, selection
-  site/            the live site served to the preview
+  meta.json        id, created, versions[], current, selection, brief, draft, published
+  site/            the React source project (see site_template.py)
   history/<n>/     snapshot of site/ for version n
+  preview/<n>/     built output of version n (builder.py), served to the preview
 """
 import json
 import re
@@ -12,26 +13,11 @@ import time
 import uuid
 from pathlib import Path
 
-from . import config
+from . import config, site_template
 
 ID_RE = re.compile(r"^[a-f0-9]{8,32}$")
 
-STARTER_HTML = """<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Your new website</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="min-h-screen bg-slate-50 text-slate-800 flex items-center justify-center">
-  <main class="text-center px-6">
-    <h1 class="text-4xl font-bold mb-4">Your website will appear here</h1>
-    <p class="text-lg text-slate-500">Tap the mic and describe what you want to build.</p>
-  </main>
-</body>
-</html>
-"""
+TEXT_SUFFIXES = (".html", ".css", ".js", ".jsx", ".json")
 
 
 class ProjectNotFound(KeyError):
@@ -54,8 +40,11 @@ def exists(project_id: str) -> bool:
 def create() -> dict:
     project_id = uuid.uuid4().hex[:12]
     root = _dir(project_id)
-    (root / "site").mkdir(parents=True)
-    (root / "site" / "index.html").write_text(STARTER_HTML, encoding="utf-8")
+    for rel, text in {**site_template.fixed_files("My website", ""), **site_template.STARTER_FILES}.items():
+        target = root / "site" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    (root / "site" / "public" / "images").mkdir(parents=True)
     meta = {"id": project_id, "created": time.time(), "versions": [], "current": 0, "selection": None}
     _snapshot(root, 0)
     meta["versions"].append({"n": 0, "summary": "Blank starter page", "instruction": "", "tier": "", "ts": time.time()})
@@ -80,35 +69,54 @@ def site_dir(project_id: str) -> Path:
     return _dir(project_id) / "site"
 
 
+def public_dir(project_id: str) -> Path:
+    return site_dir(project_id) / "public"
+
+
+def project_dir(project_id: str) -> Path:
+    return _dir(project_id)
+
+
+def preview_dir(project_id: str, n: int | None = None) -> Path:
+    if n is None:
+        n = load_meta(project_id)["current"]
+    return _dir(project_id) / "preview" / str(n)
+
+
 def read_files(project_id: str) -> dict[str, str]:
+    """The source project's text files (everything except public/ assets)."""
     site = site_dir(project_id)
     return {
         p.relative_to(site).as_posix(): p.read_text(encoding="utf-8")
         for p in sorted(site.rglob("*"))
-        if p.is_file() and p.suffix in (".html", ".css", ".js")
+        if p.is_file() and p.suffix in TEXT_SUFFIXES and "public" not in p.relative_to(site).parts[:1]
     }
 
 
-def read_index(project_id: str) -> str:
-    return (site_dir(project_id) / "index.html").read_text(encoding="utf-8")
+def _target(site: Path, rel: str) -> Path:
+    target = (site / rel).resolve()
+    if site.resolve() not in target.parents:
+        raise ValueError(f"Refusing to write outside the site: {rel}")
+    return target
 
 
-def commit(project_id: str, files: dict[str, str], summary: str, instruction: str, tier: str) -> dict:
-    """Write files into site/ and record a new version. Versions after the
+def commit(project_id: str, files: dict[str, str], summary: str, instruction: str, tier: str, deletes: tuple | list = ()) -> dict:
+    """Write (and delete) files in site/ and record a new version. Versions after the
     current one (i.e. undone ones) are discarded, like an editor's undo stack."""
     root = _dir(project_id)
     meta = load_meta(project_id)
     site = root / "site"
     for rel, content in files.items():
-        target = (site / rel).resolve()
-        if site.resolve() not in target.parents:
-            raise ValueError(f"Refusing to write outside the site: {rel}")
+        target = _target(site, rel)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
+    for rel in deletes:
+        _target(site, rel).unlink(missing_ok=True)
 
     for v in meta["versions"]:
         if v["n"] > meta["current"]:
             shutil.rmtree(root / "history" / str(v["n"]), ignore_errors=True)
+            shutil.rmtree(root / "preview" / str(v["n"]), ignore_errors=True)
     meta["versions"] = [v for v in meta["versions"] if v["n"] <= meta["current"]]
 
     n = meta["current"] + 1

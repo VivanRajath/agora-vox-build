@@ -135,3 +135,6 @@ def model_for(tier: str) -> str:
     if tier in AGENT_TIER:
         return model_for(AGENT_TIER[tier])
     return DEFAULT_MODELS.get(LLM_PROVIDER, {}).get(tier, "")
+
+# Test hook: VOX_TEST_BREAK_JNR=1 makes every jnr patch fail to build, to show escalation.
+TEST_BREAK_JNR = os.getenv("VOX_TEST_BREAK_JNR", "") == "1"

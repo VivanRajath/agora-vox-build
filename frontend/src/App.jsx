@@ -18,6 +18,7 @@ const TIER_LABEL = {
   critic: "Design critic",
   jnr: "Junior dev",
   snr: "Senior dev",
+  repair: "Senior dev (build fix)",
 };
 const AGENT_LABEL = { fontknight: "Font Knight", copywriter: "Copywriter", critic: "Design critic" };
 const TOOL_LABEL = {
@@ -26,6 +27,7 @@ const TOOL_LABEL = {
   undo_change: "Undoing",
   describe_site: "Reading the page",
   check_progress: "Checking progress",
+  build: "Build",
 };
 const TOOL_STATUS = { started: "started", done: "done", in_progress: "running in the background", failed: "failed" };
 

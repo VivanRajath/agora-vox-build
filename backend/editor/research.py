@@ -94,7 +94,7 @@ async def find_images(project_id: str, needs: list[dict]) -> list[dict]:
     """Returns [{slot, path, alt, credit, source}] for every need that found a photo."""
     if not needs:
         return []
-    images_dir = store.site_dir(project_id) / "images"
+    images_dir = store.public_dir(project_id) / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     async with httpx.AsyncClient(headers={"User-Agent": USER_AGENT}, timeout=12, follow_redirects=True) as client:
         results = await asyncio.gather(*(_find_one(client, images_dir, need) for need in needs), return_exceptions=True)
@@ -216,3 +216,53 @@ def parse_json(raw: str) -> dict:
     if not isinstance(data, dict):
         raise ValueError("model output is not a JSON object")
     return data
+
+
+# ---------------------------------------------------------------------------
+# Spoken plan
+# ---------------------------------------------------------------------------
+
+COLOUR_NAMES = {
+    "black": (20, 20, 20), "charcoal": (54, 69, 79), "slate grey": (100, 116, 139), "grey": (150, 150, 150),
+    "white": (250, 250, 250), "cream": (250, 240, 220), "beige": (225, 205, 175), "sand": (210, 185, 140),
+    "cocoa brown": (110, 70, 45), "chocolate": (75, 45, 30), "terracotta": (200, 100, 70), "rust": (170, 70, 40),
+    "red": (200, 40, 40), "raspberry": (200, 40, 90), "pink": (240, 150, 180), "blush": (240, 200, 200),
+    "coral": (250, 125, 100), "orange": (240, 140, 40), "mustard": (210, 170, 50), "yellow": (245, 210, 60),
+    "olive": (120, 125, 60), "sage green": (155, 175, 140), "forest green": (35, 85, 55), "green": (50, 150, 80),
+    "mint": (170, 225, 200), "teal": (20, 130, 130), "turquoise": (60, 200, 200), "sky blue": (120, 180, 230),
+    "blue": (40, 90, 200), "navy": (25, 35, 80), "indigo": (75, 60, 160), "lavender": (190, 170, 230),
+    "purple": (120, 50, 150), "plum": (100, 40, 80), "gold": (200, 160, 70),
+}
+
+
+def colour_name(hex_value: str) -> str:
+    value = str(hex_value or "").lstrip("#")
+    if len(value) == 3:
+        value = "".join(c * 2 for c in value)
+    try:
+        rgb = tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        return ""
+    return min(COLOUR_NAMES, key=lambda n: sum((a - b) ** 2 for a, b in zip(COLOUR_NAMES[n], rgb)))
+
+
+def _words(items: list[str]) -> str:
+    items = [i for i in items if i]
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1] if items else ""
+
+
+def spoken_plan(brief: dict) -> str:
+    """The brief as two or three sentences Vox can read out before building."""
+    business = brief.get("business") or "your business"
+    style = (brief.get("style") or {}).get("direction") or brief.get("tone") or "clean, modern"
+    sections = [str(s.get("id", "")).replace("-", " ").replace("_", " ") for s in brief.get("sections", []) if isinstance(s, dict)]
+    palette = brief.get("palette") or {}
+    colours = []
+    for key in ("background", "primary", "accent"):
+        name = colour_name(palette.get(key, ""))
+        if name and name not in colours:
+            colours.append(name)
+    text = f"For {business}, I'd go with a {style} look, with sections for {_words(sections[:6]) or 'the essentials'}."
+    if colours:
+        text += f" Colours: {_words(colours)}."
+    return text

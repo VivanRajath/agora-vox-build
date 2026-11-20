@@ -133,8 +133,10 @@ async def project_events(project_id: str):
 async def download(project_id: str):
     meta = _require_project(project_id)
     buf = io.BytesIO()
+    files = store.export_files(project_id)
+    files.setdefault("README.md", _readme((meta.get("brief") or {}).get("business") or "My website").encode())
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for rel, data in store.export_files(project_id).items():
+        for rel, data in files.items():
             zf.writestr(rel, data)
     name = _slug((meta.get("brief") or {}).get("business", "")) or f"site-{project_id}"
     return Response(
@@ -154,7 +156,7 @@ async def push_to_github(project_id: str, request: Request):
     body = await request.json()
     files = store.export_files(project_id)
     business = (meta.get("brief") or {}).get("business") or "My website"
-    files.setdefault("README.md", f"# {business}\n\nBuilt by voice with Vox Build. Open `index.html` in a browser to view it.\n".encode())
+    files.setdefault("README.md", _readme(business).encode())
     version = next((v for v in meta["versions"] if v["n"] == meta["current"]), {})
     try:
         result = await github.push(
@@ -169,6 +171,15 @@ async def push_to_github(project_id: str, request: Request):
         raise HTTPException(400, str(e))
     store.update(project_id, github={"repo": result["repo"], "url": result["url"]})
     return result
+
+
+def _readme(business: str) -> str:
+    return (
+        f"# {business}\n\nBuilt by voice with [Vox Build](https://github.com/VivanRajath/vox-build): "
+        "a Vite + React + Tailwind CSS project.\n\n"
+        "```bash\nnpm install\nnpm run dev      # http://localhost:5173\nnpm run build    # static site in dist/\n```\n\n"
+        "Text, prices, hours and links live in `src/data/site.js`; each section is a component in `src/components/`.\n"
+    )
 
 
 def _slug(text: str) -> str:
@@ -301,8 +312,12 @@ async def preview_inject():
 
 @app.get("/preview/{project_id}/{path:path}")
 async def preview(project_id: str, path: str = ""):
-    _require_project(project_id)
-    site = store.site_dir(project_id).resolve()
+    """The built site of the current version, built on demand if it's missing (v0, or after a restart)."""
+    meta = _require_project(project_id)
+    built = await engine.ensure_preview(project_id, meta["current"])
+    if built is None:
+        raise HTTPException(503, "This version couldn't be built")
+    site = built.resolve()
     target = (site / (path or "index.html")).resolve()
     if target != site and site not in target.parents:
         raise HTTPException(404)
