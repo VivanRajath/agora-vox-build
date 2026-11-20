@@ -6,8 +6,8 @@ Vox Build turns speech into website versions. Three systems cooperate:
 
 | Component | Responsibility |
 |---|---|
-| **Bolna voice agent (Vox)** | Listens (Deepgram), decides what the user wants (LLM), talks back (Cartesia), and calls our custom functions |
-| **FastAPI backend** | Mints web-call sessions, runs the edit pipeline, stores versions, serves previews, pushes events |
+| **Agora Conversational AI (Vox)** | Carries audio over Agora RTC, transcribes (ASR), calls our `/llm` endpoint each turn, speaks the reply with Murf Falcon TTS. Barge-in stops Vox mid-sentence |
+| **FastAPI backend** | Starts/stops Agora agents, is Vox's brain (`/llm`, tool loop), runs the edit pipeline, stores versions, serves previews, pushes events |
 | **React frontend** | Mic + call state, live preview iframe, element picker, activity log, version timeline |
 
 The core design choice, carried over from the original tiered agent system, is **cost- and latency-aware delegation**. Most voice edits are small ("make it blue"), so they go to a fast, cheap model that returns tiny patches. Only real redesigns pay for a top-tier model that rewrites the whole page.
@@ -18,15 +18,13 @@ The core design choice, carried over from the original tiered agent system, is *
 User speaks: "make the header dark green"
   │
   ▼
-Bolna: STT → agent LLM decides → custom function edit_site
-  │  POST {PUBLIC_BASE_URL}/tools/edit_site
-  │  Authorization: Bearer TOOL_SECRET
-  │  {"project_id": "<from user_data>", "instruction": "Make the header dark green"}
-  │  (meanwhile Vox speaks the pre_call_message: "On it.")
+Agora Conversational AI: ASR → POST {PUBLIC_BASE_URL}/llm/<project>/chat/completions
+  │  Authorization: Bearer <per-session token>, stream: true, messages = recent turns
   ▼
-backend.main.tool_edit_site
-  │  resolves project (project_id, or the project of the last minted session)
-  │  starts engine.edit() as a task, waits up to TOOL_SYNC_WAIT seconds
+backend.vox_llm.chat_completions
+  │  conversation model (VOX_LLM_TIER) with Vox's tools → tool_call edit_site
+  │  streams "On it." immediately (SSE chunk) so Murf starts speaking
+  │  vox_tools.run("edit_site") → engine.edit() as a task, waits up to TOOL_SYNC_WAIT
   ▼
 engine.edit  (serialized per project by an asyncio.Lock)
   │  router.route() → "jnr"
@@ -35,31 +33,32 @@ engine.edit  (serialized per project by an asyncio.Lock)
   │  on failure: escalate jnr → snr → architect (full rewrite)
   │  validate HTML → store.commit() → events.publish("job_done")
   ▼
-Tool response {"status": "done", "message": "Made the header dark green."}
+Tool result {"status": "done", "message": "Made the header dark green."} → model's next round
   │                     or {"status": "in_progress", ...} if still running
   ▼
-Vox: "Done, the header is dark green now. What next?"
+SSE chunks "Done, the header is dark green now. What next?" → data: [DONE] → Murf speaks it
 
 In parallel: browser EventSource gets job_done → iframe reloads (scroll kept)
 ```
 
 ## 3. Components
 
-### 3.1 Bolna integration
+### 3.1 Voice: Agora Conversational AI + Murf
 
-- **Web Call SDK** (`@bolna/web-call`): the browser calls `start()` from a click, and the SDK POSTs `{user_data}` to `/api/bolna-session`. The backend forwards it to `POST https://api.bolna.ai/web-call/session` with the API key and returns the single-use session (about 120s TTL).
-- **user_data → prompt variable**: `{project_id}` in `bolna/agent_prompt.md` is filled per call. Each custom function declares a `project_id` parameter, and Bolna substitutes prompt variables into function parameters.
-- **Fallback**: if a tool call arrives with an unsubstituted id, the backend uses the project of the most recently minted session.
-- **Custom functions** (defined in `scripts/create_agent.py`):
+- **Start** (`backend/voice.py`): `/api/voice/start` creates a channel `vox-<project>-<random>`, signs AccessToken2 RTC tokens for the user and the agent (builder vendored from AgoraIO/Tools), and calls Agora's `POST /v2/projects/{appid}/join` with Basic auth. The agent's `llm.url` points at our `/llm/{project_id}/chat/completions` with a per-session HMAC token as `api_key`; `tts` is `vendor: "murf"` (Falcon). The browser only gets `{app_id, channel, uid, token, agent_id}`.
+- **Stop**: `/api/voice/stop` calls `.../agents/{id}/leave`. The browser sends it on hang-up and via `sendBeacon` on tab close; Agora's idle timeout (60 s) covers crashes.
+- **Brain** (`backend/vox_llm.py`): Agora doesn't execute tools for a custom LLM, so the endpoint runs the tool loop itself (up to 5 rounds), streaming any text the model says before a tool call so the user hears "On it" while the tool runs. Replies are cleaned for speech (no markdown, URLs spoken as "dot" and "slash").
+- **Live state**: Agora's history keeps only spoken text, so each turn's system prompt restates the project state (version, latest job, selection, GitHub).
+- **Activity log**: `/llm` publishes `transcript` (user and Vox text) and `tool` (name, status, result) events on the project SSE stream.
+- **Tools** (`backend/vox_tools.py`): one registry (name, JSON schema, filler line, async handler) shared by voice and the typed fallback:
 
-| Function | Endpoint | Purpose |
-|---|---|---|
-| `generate_site` | `/tools/generate_site` | Build a new site from a description |
-| `edit_site` | `/tools/edit_site` | Any change (generates instead if the project is still blank) |
-| `undo_change` | `/tools/undo_change` | Revert to the previous version |
-| `describe_site` | `/tools/describe_site` | Outline of the current page (no LLM call) |
-
-- The Web Call SDK has no transcript events, so the UI's activity log is driven by our own SSE events from the edit pipeline.
+| Tool | Purpose |
+|---|---|
+| `generate_site` | Build a new site from a description |
+| `edit_site` | Any change (generates instead if the project is still blank) |
+| `undo_change` | Revert to the previous version |
+| `describe_site` | Outline of the current page (no LLM call) |
+| `check_progress` | Status of the latest background job |
 
 ### 3.2 researcher (`backend/editor/research.py`)
 
@@ -113,8 +112,8 @@ Anthropic goes through the official `anthropic` SDK, with effort `low` for patch
 
 | Step | Typical |
 |---|---|
-| Bolna STT + agent LLM decision | ~1s |
-| `pre_call_message` spoken | covers the wait |
+| Agora ASR + end-of-turn + Vox's first model round | ~1-1.5s |
+| Text before the tool call streamed to Murf | covers the wait |
 | jnr patch (small model, low effort, small output) | 2-5s |
 | snr patch | 4-10s |
 | architect rewrite / first generation | 20-60s, returns "working on it" and finishes in the background |

@@ -2,8 +2,8 @@ spec_version: "0.1.0"
 name: vox-build
 version: 2.0.0
 description: >
-  Voice-driven website generator. A Bolna voice agent (Vox) turns speech
-  into custom-function calls; the backend routes each edit to a tiered
+  Voice-driven website generator. Vox, a voice agent on Agora Conversational AI
+  with Murf Falcon TTS, turns speech into tool calls on our /llm endpoint; the backend routes each edit to a tiered
   sub-agent (jnr-developer, snr-developer, architect) to balance latency
   and LLM cost, and streams every new version to a live preview.
 
@@ -16,10 +16,11 @@ tools: [file-read, file-write]
 skills: [route-intent, apply-edit]
 
 voice:
-  platform: bolna
-  prompt: bolna/agent_prompt.md
-  setup: scripts/create_agent.py
-  functions: [generate_site, edit_site, undo_change, describe_site]
+  platform: agora-conversational-ai
+  tts: murf-falcon
+  prompt: agents/vox/SOUL.md
+  llm_endpoint: /llm/{project_id}/chat/completions
+  tools: backend/vox_tools.py
 
 sub_agents:
   - name: code-editor

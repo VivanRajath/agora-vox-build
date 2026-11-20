@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@bolna/web-call": "3.0.1",
+    "agora-rtc-sdk-ng": "4.24.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },

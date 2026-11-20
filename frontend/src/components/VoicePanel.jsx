@@ -3,35 +3,35 @@ import { MicIcon, PointerIcon, StopIcon, CloseIcon } from "./icons.jsx";
 const STATUS = {
   idle: "Talk to Vox",
   connecting: "Connecting…",
-  ringing: "Connecting…",
-  active: "Listening",
-  ended: "Talk to Vox",
+  live: "Listening",
+  ending: "Ending call…",
+  error: "Talk to Vox",
 };
 
 // Relative bar heights; the live volume scales them.
 const BARS = [0.45, 0.8, 1, 0.65, 0.35];
 
 export default function VoicePanel({ voice, config, aiReady, onOpenSettings, picking, onTogglePick, selection, onClearSelection, isBlank }) {
-  const live = voice.state === "active";
-  const connecting = voice.state === "connecting" || voice.state === "ringing";
+  const live = voice.state === "live";
+  const connecting = voice.state === "connecting";
   const voiceReady = config?.voice_enabled;
   const level = Math.min(voice.volume || 0, 1);
 
   return (
     <section className="voice" aria-label="Voice">
       <button
-        className={`talk ${live ? "is-live" : ""} ${connecting ? "is-connecting" : ""}`}
+        className={`talk ${live ? "is-live" : ""} ${connecting ? "is-connecting" : ""} ${live && voice.speaking ? "is-speaking" : ""}`}
         onClick={live || connecting ? voice.stop : voice.start}
         disabled={!voiceReady}
       >
         <span className="talk-icon">{live ? <StopIcon /> : <MicIcon />}</span>
         <span className="talk-label">
-          <strong>{voiceReady ? STATUS[voice.state] || "Talk to Vox" : "Voice is off"}</strong>
+          <strong>{!voiceReady ? "Voice is off" : live && voice.speaking ? "Vox is speaking" : STATUS[voice.state] || "Talk to Vox"}</strong>
           <span>
             {!voiceReady
-              ? "This server has no Bolna agent. Type below instead."
+              ? "Voice needs Agora and Murf keys on the server. Type below instead."
               : live
-                ? "Say what to build or change. Tap to end."
+                ? "Talk any time, even over Vox. Tap to end."
                 : connecting
                   ? "Allow the microphone if your browser asks."
                   : isBlank

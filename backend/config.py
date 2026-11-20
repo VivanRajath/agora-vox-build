@@ -35,21 +35,41 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
-# Bolna
-BOLNA_API_KEY = os.getenv("BOLNA_API_KEY", "")
-BOLNA_AGENT_ID = os.getenv("BOLNA_AGENT_ID", "")
-BOLNA_API_BASE = os.getenv("BOLNA_API_BASE", "https://api.bolna.ai")
+# Agora Conversational AI (voice). App ID + certificate sign RTC tokens; the
+# customer ID/secret authenticate the REST calls that start and stop the agent.
+AGORA_APP_ID = os.getenv("AGORA_APP_ID", "")
+AGORA_APP_CERTIFICATE = os.getenv("AGORA_APP_CERTIFICATE", "")
+AGORA_CUSTOMER_ID = os.getenv("AGORA_CUSTOMER_ID", "")
+AGORA_CUSTOMER_SECRET = os.getenv("AGORA_CUSTOMER_SECRET", "")
+AGORA_API_BASE = os.getenv("AGORA_API_BASE", "https://api.agora.io/api/conversational-ai-agent/v2")
 
-# Shared secret Bolna sends (as "Authorization: Bearer <secret>") when it
-# calls our custom-function endpoints. Empty disables the check (local dev).
-TOOL_SECRET = os.getenv("TOOL_SECRET", "")
+# Murf Falcon TTS, called by Agora's engine. Falcon voice ids are bare names.
+MURF_API_KEY = os.getenv("MURF_API_KEY", "")
+MURF_VOICE_ID = os.getenv("MURF_VOICE_ID", "Priya")
+MURF_LOCALE = os.getenv("MURF_LOCALE", "en-IN")
+MURF_WS_URL = os.getenv("MURF_WS_URL", "wss://global.api.murf.ai/v1/speech/stream-input")
+MURF_MODEL = os.getenv("MURF_MODEL", "FALCON")
 
-# Public URL Bolna uses to reach this backend. Render sets RENDER_EXTERNAL_URL itself.
+ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "en-US")
+
+# Model tier for Vox's conversational layer (the /llm endpoint Agora calls each turn).
+VOX_LLM_TIER = os.getenv("VOX_LLM_TIER", "jnr")
+
+# Signs the per-session tokens Agora sends back to our /llm endpoint.
+# Falls back to the session secret so local dev works without it.
+TOOL_SECRET = os.getenv("TOOL_SECRET", "") or SESSION_SECRET
+
+# Public https URL Agora's cloud uses to reach /llm. Render sets RENDER_EXTERNAL_URL itself.
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
 
 # How long a voice tool call waits for an edit before answering
 # "still working" and letting the edit finish in the background.
 TOOL_SYNC_WAIT = float(os.getenv("TOOL_SYNC_WAIT", "8"))
+
+
+def voice_enabled() -> bool:
+    return all((AGORA_APP_ID, AGORA_APP_CERTIFICATE, AGORA_CUSTOMER_ID, AGORA_CUSTOMER_SECRET, MURF_API_KEY, PUBLIC_BASE_URL))
+
 
 # LLM provider: "anthropic", "openai", "gemini" or "groq". Auto-detected from keys.
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -102,7 +122,7 @@ RATE_LIMIT_FALLBACKS = {
 
 # Helper agents borrow a developer tier's model. The planners run on the fast
 # model (its own rate-limit quota on Groq); the design critic needs the stronger one.
-AGENT_TIER = {"research": "jnr", "fontknight": "jnr", "copywriter": "jnr", "critic": "snr"}
+AGENT_TIER = {"research": "jnr", "fontknight": "jnr", "copywriter": "jnr", "critic": "snr", "vox": VOX_LLM_TIER}
 
 # Set DESIGN_CRITIC=0 to skip the review pass on new sites (saves one model call).
 DESIGN_CRITIC = os.getenv("DESIGN_CRITIC", "1") != "0"

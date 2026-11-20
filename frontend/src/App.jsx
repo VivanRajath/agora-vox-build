@@ -20,6 +20,14 @@ const TIER_LABEL = {
   snr: "Senior dev",
 };
 const AGENT_LABEL = { fontknight: "Font Knight", copywriter: "Copywriter", critic: "Design critic" };
+const TOOL_LABEL = {
+  generate_site: "Building the site",
+  edit_site: "Editing the site",
+  undo_change: "Undoing",
+  describe_site: "Reading the page",
+  check_progress: "Checking progress",
+};
+const TOOL_STATUS = { started: "started", done: "done", in_progress: "running in the background", failed: "failed" };
 
 function useProjectId() {
   const [projectId, setProjectId] = useState(() => new URLSearchParams(location.search).get("p"));
@@ -95,7 +103,7 @@ export default function App() {
       switch (ev.type) {
         case "job_started":
           setBusy({ instruction: ev.instruction, tier: ev.tier });
-          addLog({ kind: "user", text: ev.instruction, tier: ev.tier });
+          addLog({ kind: "task", who: "Task", text: ev.instruction, tier: ev.tier });
           break;
         case "job_stage":
           setBusy((b) => (b ? { ...b, tier: ev.tier } : b));
@@ -132,6 +140,16 @@ export default function App() {
           break;
         case "selection":
           setSelection(ev.selection);
+          break;
+        case "transcript":
+          addLog({ kind: ev.role === "user" ? "user" : "vox", text: ev.text });
+          break;
+        case "tool":
+          addLog({
+            kind: ev.status === "failed" ? "error" : "tool",
+            who: TOOL_LABEL[ev.name] || ev.name,
+            text: ev.status === "started" ? "Started" : `${TOOL_STATUS[ev.status] || ev.status}${ev.message ? `: ${ev.message}` : ""}`,
+          });
           break;
       }
     };

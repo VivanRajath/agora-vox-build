@@ -1,70 +1,121 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BolnaWebCall } from "@bolna/web-call";
 
-const ERROR_MESSAGES = {
-  mint_failed: "Couldn't start a voice session. Check BOLNA_API_KEY and BOLNA_AGENT_ID on the server.",
-  at_capacity: "Voice is busy right now. Try again in a moment.",
-  microphone_denied: "Microphone access is blocked. Allow it in your browser and try again.",
-  connect_failed: "Couldn't connect to the voice agent. Check your network.",
-  call_rejected: "The voice agent declined the call.",
-  autoplay_blocked: "Your browser blocked audio. Click the mic again.",
-  already_active: "A call is already running.",
-};
+// The SDK is large, so it loads on demand (prefetched once a project is open).
+let sdk = null;
+function loadAgora() {
+  sdk ??= import("agora-rtc-sdk-ng").then((m) => {
+    m.default.setLogLevel(3); // warnings and errors only
+    return m.default;
+  });
+  return sdk;
+}
 
-// The SDK's own messages use em dashes; keep the UI free of them.
-const plain = (message) => (message || "").replace(/\s*[—–]\s*/g, ". ");
+const MIC_ERRORS = new Set(["PERMISSION_DENIED", "NOT_READABLE", "DEVICE_NOT_FOUND"]);
 
+function friendly(e) {
+  if (MIC_ERRORS.has(e?.code) || e?.name === "NotAllowedError") {
+    return "Microphone access is blocked. Allow it in your browser and try again.";
+  }
+  return e?.message || "Couldn't start the voice call";
+}
+
+async function post(path, body) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
+  return data;
+}
+
+// state: idle | connecting | live | ending | error
 export function useVoiceCall(projectId) {
-  const callRef = useRef(null);
+  const session = useRef(null); // { client, mic, agentId }
   const [state, setState] = useState("idle");
-  const [volume, setVolume] = useState(0);
+  const [volume, setVolume] = useState(0); // the agent's voice, 0..1
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    if (!projectId) return;
-    const call = new BolnaWebCall({
-      sessionUrl: "/api/bolna-session",
-      userData: { project_id: projectId },
-    });
-    call.on("state-change", (s) => setState(s));
-    call.on("volume-level", (v) => setVolume(v));
-    call.on("call-end", () => {
-      setVolume(0);
-      setMuted(false);
-    });
-    call.on("error", (e) => {
-      if (e.code === "at_capacity" && e.scope === "not_enabled") {
-        setError("Web calls aren't enabled on this Bolna account yet.");
-      } else {
-        setError(ERROR_MESSAGES[e.code] || plain(e.message) || "Voice call error");
-      }
-    });
-    callRef.current = call;
-    return () => {
-      call.stop();
-      callRef.current = null;
-    };
-  }, [projectId]);
+  const teardown = useCallback(async (notify = true) => {
+    const s = session.current;
+    session.current = null;
+    if (!s) return;
+    clearInterval(s.meter);
+    s.mic?.close();
+    await s.client.leave().catch(() => {});
+    if (notify && s.agentId) post("/api/voice/stop", { agent_id: s.agentId }).catch(() => {});
+    setVolume(0);
+    setMuted(false);
+  }, []);
 
   // Must be called straight from a click handler, or browsers block audio.
   const start = useCallback(async () => {
+    if (session.current || !projectId) return;
     setError(null);
+    setState("connecting");
+    const AgoraRTC = await loadAgora();
+    const client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    const s = { client, mic: null, agentId: null, meter: null, agentTrack: null };
+    session.current = s;
     try {
-      await callRef.current?.start();
+      // Mic first, so a blocked microphone doesn't start an agent we can't talk to.
+      s.mic = await AgoraRTC.createMicrophoneAudioTrack({ AEC: true, ANS: true, AGC: true });
+      const info = await post("/api/voice/start", { project_id: projectId });
+      s.agentId = info.agent_id;
+      if (session.current !== s) return; // stopped while connecting
+
+      client.on("user-published", async (user, mediaType) => {
+        if (mediaType !== "audio") return;
+        await client.subscribe(user, mediaType);
+        user.audioTrack.play();
+        s.agentTrack = user.audioTrack;
+      });
+      client.on("user-unpublished", (user) => {
+        if (s.agentTrack === user.audioTrack) s.agentTrack = null;
+      });
+      client.on("connection-state-change", (cur) => {
+        if (cur === "DISCONNECTED" && session.current === s) {
+          teardown();
+          setState("idle");
+        }
+      });
+
+      await client.join(info.app_id, info.channel, info.token, info.uid);
+      await client.publish(s.mic);
+      s.meter = setInterval(() => setVolume(s.agentTrack ? s.agentTrack.getVolumeLevel() : 0), 100);
+      setState("live");
     } catch (e) {
-      setError(ERROR_MESSAGES[e?.code] || plain(e?.message) || "Couldn't start the call");
+      await teardown();
+      setError(friendly(e));
+      setState("error");
     }
-  }, []);
+  }, [projectId, teardown]);
 
-  const stop = useCallback(() => callRef.current?.stop(), []);
+  const stop = useCallback(async () => {
+    setState("ending");
+    await teardown();
+    setState("idle");
+  }, [teardown]);
 
-  const toggleMute = useCallback(() => {
-    const call = callRef.current;
-    if (!call) return;
-    call.setMuted(!call.isMuted());
-    setMuted(call.isMuted());
-  }, []);
+  const toggleMute = useCallback(async () => {
+    const mic = session.current?.mic;
+    if (!mic) return;
+    const next = !muted;
+    await mic.setEnabled(!next);
+    setMuted(next);
+  }, [muted]);
 
-  return { state, volume, muted, error, start, stop, toggleMute };
+  // Project change or unmount ends the call; closing the tab tells the server too.
+  useEffect(() => {
+    if (projectId) loadAgora().catch(() => {});
+    const onUnload = () => {
+      const agentId = session.current?.agentId;
+      if (agentId) navigator.sendBeacon("/api/voice/stop", new Blob([JSON.stringify({ agent_id: agentId })], { type: "application/json" }));
+    };
+    window.addEventListener("pagehide", onUnload);
+    return () => {
+      window.removeEventListener("pagehide", onUnload);
+      teardown();
+    };
+  }, [projectId, teardown]);
+
+  return { state, volume, muted, error, start, stop, toggleMute, speaking: volume > 0.05 };
 }

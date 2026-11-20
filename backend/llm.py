@@ -1,4 +1,6 @@
+import json
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 
 import anthropic
 import openai
@@ -85,40 +87,105 @@ async def list_models(provider: str, api_key: str, base_url: str = "") -> list[s
     return sorted(m.id.removeprefix("models/") for m in page.data)
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
+
+
+@dataclass
+class Reply:
+    text: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+
 async def complete(system: str, user: str, tier: str, max_tokens: int = 16000, json_mode: bool = False) -> str:
     """json_mode asks OpenAI-compatible providers for a JSON object; callers still parse defensively."""
+    reply = await chat(system, [{"role": "user", "content": user}], tier, max_tokens=max_tokens, json_mode=json_mode)
+    return reply.text
+
+
+async def chat(
+    system: str, messages: list[dict], tier: str, tools: list[dict] | None = None,
+    max_tokens: int = 16000, json_mode: bool = False,
+) -> Reply:
+    """One model turn over an OpenAI-style message list (user / assistant with tool_calls / tool).
+
+    tools are neutral specs: {name, description, parameters (JSON schema)}."""
     provider, creds, model, chosen = _target(tier)
     if not creds:
         raise LLMError("No AI key is set up. Add one in Settings")
     if provider == "anthropic":
-        return await _complete_anthropic(creds, system, user, model, tier, max_tokens)
+        return await _complete_anthropic(creds, system, messages, tools, model, tier, max_tokens)
     if provider in OPENAI_COMPATIBLE:
         # Model spillover only when the model wasn't picked by the user.
         fallbacks = [] if chosen else config.RATE_LIMIT_FALLBACKS.get(provider, [])
-        return await _complete_openai(creds, provider, fallbacks, system, user, model, tier, max_tokens, json_mode)
+        return await _complete_openai(creds, provider, fallbacks, system, messages, tools, model, tier, max_tokens, json_mode)
     raise LLMError(f"Unknown AI provider {provider!r}")
 
 
-async def _complete_anthropic(creds: list[dict], system: str, user: str, model: str, tier: str, max_tokens: int) -> str:
+# ---------------------------------------------------------------------------
+# Anthropic
+# ---------------------------------------------------------------------------
+
+def _anthropic_messages(messages: list[dict]) -> list[dict]:
+    """OpenAI-style history -> Anthropic content blocks, merging same-role neighbours."""
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            role, blocks = "user", [{"type": "tool_result", "tool_use_id": m["tool_call_id"], "content": str(m.get("content") or "")}]
+        elif role == "assistant":
+            blocks = [{"type": "text", "text": m["content"]}] if m.get("content") else []
+            for call in m.get("tool_calls") or []:
+                fn = call["function"]
+                args = fn.get("arguments") or "{}"
+                blocks.append({"type": "tool_use", "id": call["id"], "name": fn["name"], "input": json.loads(args) if isinstance(args, str) else args})
+        elif role == "user":
+            blocks = [{"type": "text", "text": text}] if (text := content_text(m.get("content"))).strip() else []
+        else:
+            continue  # system messages are passed separately
+        if not blocks:
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1]["content"].extend(blocks)
+        else:
+            out.append({"role": role, "content": blocks})
+    if not out or out[0]["role"] != "user":
+        out.insert(0, {"role": "user", "content": [{"type": "text", "text": "(conversation started)"}]})
+    return out
+
+
+def content_text(content) -> str:
+    """Message content as plain text (strings, or OpenAI content-part lists)."""
+    if isinstance(content, str):
+        return content
+    return " ".join(p.get("text", "") for p in content or [] if isinstance(p, dict))
+
+
+async def _complete_anthropic(creds: list[dict], system: str, messages: list[dict], tools: list[dict] | None, model: str, tier: str, max_tokens: int) -> Reply:
     """Tries each key in turn while they're rate limited."""
     for i, cred in enumerate(creds):
         last = i == len(creds) - 1
         api = client("anthropic", cred["api_key"])
         try:
-            return await _anthropic_once(api if last else api.with_options(max_retries=0), system, user, model, tier, max_tokens)
+            return await _anthropic_once(api if last else api.with_options(max_retries=0), system, messages, tools, model, tier, max_tokens)
         except anthropic.RateLimitError as e:
             if last:
                 raise LLMError("The model is rate limited right now, try again in a moment") from e
 
 
-async def _anthropic_once(api: anthropic.AsyncAnthropic, system: str, user: str, model: str, tier: str, max_tokens: int) -> str:
+async def _anthropic_once(api: anthropic.AsyncAnthropic, system: str, messages: list[dict], tools: list[dict] | None, model: str, tier: str, max_tokens: int) -> Reply:
     kwargs = dict(
         model=model,
         max_tokens=max_tokens,
         system=system,
         output_config={"effort": EFFORT_BY_TIER.get(tier, "low")},
-        messages=[{"role": "user", "content": user}],
+        messages=_anthropic_messages(messages),
     )
+    if tools:
+        kwargs["tools"] = [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools]
     try:
         if model in FALLBACK_MODELS:
             response = await api.beta.messages.create(
@@ -136,10 +203,15 @@ async def _anthropic_once(api: anthropic.AsyncAnthropic, system: str, user: str,
     if response.stop_reason == "refusal":
         raise LLMError("The model declined this request")
     text = "".join(block.text for block in response.content if block.type == "text")
+    calls = [ToolCall(b.id, b.name, dict(b.input or {})) for b in response.content if b.type == "tool_use"]
     if response.stop_reason == "max_tokens":
         raise LLMTruncated("The model ran out of room before finishing")
-    return text
+    return Reply(text, calls)
 
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible (OpenAI, Gemini, Groq, custom)
+# ---------------------------------------------------------------------------
 
 def _limit_message(e: openai.APIStatusError) -> str:
     text = str(e.message).lower()
@@ -163,13 +235,23 @@ def _openai_params(provider: str, model: str, tier: str, max_tokens: int, json_m
     return params
 
 
+def _openai_messages(system: str, messages: list[dict]) -> list[dict]:
+    keep = ("role", "content", "tool_calls", "tool_call_id")
+    out = [{"role": "system", "content": system}]
+    for m in messages:
+        if m.get("role") in ("user", "assistant", "tool"):
+            out.append({k: m[k] for k in keep if m.get(k) is not None})
+    return out
+
+
 async def _complete_openai(
-    creds: list[dict], provider: str, fallbacks: list[str], system: str, user: str, model: str, tier: str, max_tokens: int,
-    json_mode: bool = False,
-) -> str:
+    creds: list[dict], provider: str, fallbacks: list[str], system: str, messages: list[dict], tools: list[dict] | None,
+    model: str, tier: str, max_tokens: int, json_mode: bool = False,
+) -> Reply:
     # Every key on the chosen model first (same quality), then sibling models.
     models = [model] + [m for m in fallbacks if m != model]
     attempts = [(m, cred) for m in models for cred in creds]
+    extra = {"tools": [{"type": "function", "function": t} for t in tools]} if tools else {}
     for i, (candidate, cred) in enumerate(attempts):
         last = i == len(attempts) - 1
         api = client(provider, cred["api_key"], cred.get("base_url", ""))
@@ -178,7 +260,8 @@ async def _complete_openai(
         try:
             response = await attempt.chat.completions.create(
                 model=candidate,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                messages=_openai_messages(system, messages),
+                **extra,
                 **_openai_params(provider, candidate, tier, max_tokens, json_mode),
             )
             break
@@ -199,4 +282,11 @@ async def _complete_openai(
     choice = response.choices[0]
     if choice.finish_reason == "length":
         raise LLMTruncated("The model ran out of room before finishing")
-    return choice.message.content or ""
+    calls = []
+    for call in choice.message.tool_calls or []:
+        try:
+            args = json.loads(call.function.arguments or "{}")
+        except ValueError:
+            args = {}
+        calls.append(ToolCall(call.id, call.function.name, args if isinstance(args, dict) else {}))
+    return Reply(choice.message.content or "", calls)

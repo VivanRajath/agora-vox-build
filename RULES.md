@@ -8,8 +8,8 @@
 - Reply to the voice agent with one short, speakable sentence.
 
 ## Never
-- Expose BOLNA_API_KEY or LLM keys to the browser.
-- Accept tool calls without the TOOL_SECRET when one is configured.
+- Expose Agora, Murf or LLM keys to the browser.
+- Accept /llm calls without a valid per-session token signed with TOOL_SECRET.
 - Write outside a project's site directory.
 - Run generated site code on the server. Sites are only served as static files.
 

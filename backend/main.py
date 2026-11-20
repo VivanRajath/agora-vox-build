@@ -1,12 +1,12 @@
 """Vox Build backend.
 
-  /api/*      browser API (projects, typed commands, SSE, Bolna session mint,
-              account + AI settings, zip download, GitHub push)
+  /api/*      browser API (projects, typed commands, SSE, account + AI settings,
+              zip download, GitHub push)
+  /api/voice  start/stop an Agora Conversational AI agent (voice.py)
+  /llm/*      OpenAI-compatible endpoint Agora calls each turn (vox_llm.py)
   /auth/*     Google / GitHub sign-in
-  /tools/*    Bolna custom-function endpoints, called mid-conversation
   /preview/*  serves generated sites to the preview iframe
 """
-import asyncio
 import io
 import ipaddress
 import logging
@@ -21,13 +21,15 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, events, github, llm, store, users
+from . import auth, config, events, github, jobs, llm, store, users, voice, vox_llm, vox_tools
 from .editor import engine
 
 log = logging.getLogger("vox-build")
 app = FastAPI(title="Vox Build")
 app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET, session_cookie="vox-build", max_age=30 * 86400, same_site="lax")
 app.include_router(auth.router)
+app.include_router(voice.router)
+app.include_router(vox_llm.router)
 
 INJECT_JS = Path(__file__).with_name("preview_inject.js")
 NO_STORE = {"Cache-Control": "no-store"}
@@ -36,19 +38,6 @@ NO_STORE = {"Cache-Control": "no-store"}
 # gives them an opaque origin, in the iframe and when opened directly, so their
 # scripts can't call /api as the signed-in viewer (e.g. push to their GitHub).
 PREVIEW_SANDBOX = "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"
-
-# Project the most recent voice call was started for. Fallback for tool calls
-# that arrive without a usable project_id.
-_active_project: str | None = None
-_background: set[asyncio.Task] = set()
-
-
-def _spawn(coro) -> asyncio.Task:
-    task = asyncio.create_task(coro)
-    _background.add(task)
-    task.add_done_callback(_background.discard)
-    return task
-
 
 def _require_project(project_id: str) -> dict:
     try:
@@ -65,17 +54,6 @@ def _claim(request: Request, meta: dict) -> None:
         store.update(meta["id"], owner=user["id"])
 
 
-def _run(project_id: str, coro) -> asyncio.Task:
-    """Runs an edit job with the project owner's AI settings (or the server's .env)."""
-    owner = users.get(store.load_meta(project_id).get("owner"))
-
-    async def with_settings():
-        llm.use_settings(users.ai_settings(owner))
-        return await coro
-
-    return _spawn(with_settings())
-
-
 # ---------------------------------------------------------------------------
 # Browser API
 # ---------------------------------------------------------------------------
@@ -83,7 +61,7 @@ def _run(project_id: str, coro) -> asyncio.Task:
 @app.get("/api/config")
 async def get_config():
     return {
-        "voice_enabled": bool(config.BOLNA_API_KEY and config.BOLNA_AGENT_ID),
+        "voice_enabled": config.voice_enabled(),
         "llm_provider": config.LLM_PROVIDER,
         "auth": auth.enabled(),
         "default_models": config.DEFAULT_MODELS,
@@ -112,12 +90,8 @@ async def typed_command(project_id: str, request: Request):
     if not text:
         raise HTTPException(400, "Empty command")
     _claim(request, meta)
-    if text.lower() in ("undo", "undo that", "go back"):
-        _spawn(engine.undo(project_id))
-    elif meta["current"] == 0:
-        _run(project_id, engine.generate(project_id, text))
-    else:
-        _run(project_id, engine.edit(project_id, text))
+    name, args = vox_tools.typed_tool(project_id, text)
+    jobs.spawn(vox_tools.run(project_id, name, args))
     return JSONResponse({"accepted": True}, status_code=202)
 
 
@@ -153,33 +127,6 @@ async def project_events(project_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.post("/api/bolna-session")
-async def bolna_session(request: Request):
-    """Mints a single-use Bolna web-call session. The API key never leaves the server."""
-    global _active_project
-    if not (config.BOLNA_API_KEY and config.BOLNA_AGENT_ID):
-        raise HTTPException(503, "Voice is not configured: set BOLNA_API_KEY and BOLNA_AGENT_ID")
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
-    user_data = body.get("user_data") or {}
-    project_id = str(user_data.get("project_id", ""))
-    if store.exists(project_id):
-        _active_project = project_id
-        _claim(request, store.load_meta(project_id))
-
-    async with httpx.AsyncClient(timeout=20) as client:
-        r = await client.post(
-            f"{config.BOLNA_API_BASE}/web-call/session",
-            headers={"Authorization": f"Bearer {config.BOLNA_API_KEY}"},
-            json={"agent_id": config.BOLNA_AGENT_ID, "user_data": user_data},
-        )
-    if r.status_code >= 400:
-        log.warning("Bolna session mint failed: %s %s", r.status_code, r.text[:300])
-    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 @app.get("/api/projects/{project_id}/download")
@@ -341,103 +288,6 @@ async def save_pexels(request: Request):
             raise HTTPException(400, "Pexels rejected that key")
     users.set_pexels(user, api_key or None)
     return _settings_view(user)
-
-
-# ---------------------------------------------------------------------------
-# Bolna custom functions
-# ---------------------------------------------------------------------------
-
-async def _tool_args(request: Request) -> dict:
-    if config.TOOL_SECRET and request.headers.get("authorization") != f"Bearer {config.TOOL_SECRET}":
-        raise HTTPException(401, "Bad tool secret")
-    args = dict(request.query_params)
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            args.update(body)
-    except ValueError:
-        pass
-    log.info("tool call %s %s", request.url.path, {k: str(v)[:120] for k, v in args.items()})
-    return args
-
-
-def _tool_project(args: dict) -> str:
-    project_id = str(args.get("project_id") or "").strip()
-    if store.exists(project_id):
-        return project_id
-    if _active_project and store.exists(_active_project):
-        return _active_project
-    raise HTTPException(404, "No active website project")
-
-
-async def _answer_voice(project_id: str, coro) -> dict:
-    """Waits briefly so quick edits can be confirmed in the same breath;
-    otherwise lets the edit finish in the background (the preview updates via SSE)."""
-    task = _run(project_id, coro)
-    try:
-        result = await asyncio.wait_for(asyncio.shield(task), config.TOOL_SYNC_WAIT)
-    except asyncio.TimeoutError:
-        return {"status": "in_progress", "message": "Working on it. The change will show up on screen in a few seconds."}
-    return {"status": "done" if result["ok"] else "failed", "message": result["message"]}
-
-
-@app.post("/tools/generate_site")
-async def tool_generate_site(request: Request):
-    args = await _tool_args(request)
-    project_id = _tool_project(args)
-    description = str(args.get("description", "")).strip()
-    if not description:
-        return {"status": "failed", "message": "I need a short description of the website first."}
-    return await _answer_voice(project_id, engine.generate(project_id, description))
-
-
-@app.post("/tools/edit_site")
-async def tool_edit_site(request: Request):
-    args = await _tool_args(request)
-    project_id = _tool_project(args)
-    instruction = str(args.get("instruction", "")).strip()
-    if not instruction:
-        return {"status": "failed", "message": "What would you like me to change?"}
-    if store.load_meta(project_id)["current"] == 0:
-        return await _answer_voice(project_id, engine.generate(project_id, instruction))
-    return await _answer_voice(project_id, engine.edit(project_id, instruction))
-
-
-@app.post("/tools/undo_change")
-async def tool_undo(request: Request):
-    project_id = _tool_project(await _tool_args(request))
-    result = await engine.undo(project_id)
-    return {"status": "done" if result["ok"] else "failed", "message": result["message"]}
-
-
-STAGE_SPEECH = {
-    "research": "the researcher is planning the design",
-    "team": "Font Knight is choosing fonts and the copywriter is writing the text",
-    "architect": "the architect is building the page",
-    "critic": "the design critic is polishing it",
-    "jnr": "the developer is making the change",
-    "snr": "the senior developer is making the change",
-}
-
-
-@app.post("/tools/check_progress")
-async def tool_check_progress(request: Request):
-    project_id = _tool_project(await _tool_args(request))
-    job = events.job(project_id)
-    if not job:
-        return {"status": "idle", "message": "Nothing is being built right now."}
-    if job["state"] == "working":
-        stage = STAGE_SPEECH.get(job.get("stage"), "it is still working")
-        return {"status": "in_progress", "message": f"Still working: {stage}. It should be ready in a few seconds."}
-    if job["state"] == "failed":
-        return {"status": "failed", "message": f"The last change didn't work: {job.get('reason', 'unknown error')}"}
-    return {"status": "done", "message": f"Finished. {job.get('summary', '')}"}
-
-
-@app.post("/tools/describe_site")
-async def tool_describe(request: Request):
-    project_id = _tool_project(await _tool_args(request))
-    return {"status": "done", "message": engine.describe(project_id)}
 
 
 # ---------------------------------------------------------------------------

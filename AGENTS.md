@@ -3,8 +3,8 @@
 ## Agent Hierarchy
 
 ```
-Vox (Bolna voice agent)  ── bolna/agent_prompt.md, scripts/create_agent.py
-│   Talks to the user, calls custom functions:
+Vox (Agora Conversational AI + Murf)  ── agents/vox/SOUL.md, backend/vox_llm.py
+│   Talks to the user, calls tools (backend/vox_tools.py):
 │   generate_site · edit_site · undo_change · describe_site · check_progress
 │
 └── vox-build backend (orchestrator)  ── backend/main.py
@@ -36,19 +36,19 @@ Every builder also gets the shared `DESIGN_PRINCIPLES` in `backend/editor/prompt
 
 ---
 
-## Vox (Bolna voice agent)
+## Vox (voice agent)
 
-**Prompt:** `bolna/agent_prompt.md` (`{project_id}` comes from web-call `user_data`)
-**Pipeline:** Deepgram nova-3 → Bolna-hosted LLM → Cartesia sonic-3.5
-**Functions:** POST `{PUBLIC_BASE_URL}/tools/<name>` with `Authorization: Bearer TOOL_SECRET`
+**Prompt:** `agents/vox/SOUL.md` plus live project state (`backend/prompts_vox.py`)
+**Pipeline:** browser ⇄ Agora RTC ⇄ Agora Conversational AI Engine (ARES ASR → our `/llm/{project_id}/chat/completions` → Murf Falcon TTS)
+**Model:** `VOX_LLM_TIER` (default the jnr model), with tool calling; the tool loop runs server-side and the reply streams back as SSE
 
-| Function | Params | Returns |
+| Tool | Params | Returns |
 |---|---|---|
-| generate_site | project_id, description | `{status, message}` |
-| edit_site | project_id, instruction | `{status, message}` |
-| undo_change | project_id | `{status, message}` |
-| describe_site | project_id | `{status, message}` |
-| check_progress | project_id | `{status, message}` for the latest background job |
+| generate_site | description | `{status, message}` |
+| edit_site | instruction | `{status, message}` |
+| undo_change | none | `{status, message}` |
+| describe_site | none | `{status, message}` |
+| check_progress | none | `{status, message}` for the latest background job |
 
 `status` is `done`, `in_progress` (finishes in the background, preview updates via SSE) or `failed`.
 

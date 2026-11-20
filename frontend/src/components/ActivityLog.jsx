@@ -27,8 +27,8 @@ export default function ActivityLog({ entries, tierLabel, isBlank }) {
       {entries.map((e) => (
         <li key={e.id} className={`entry is-${e.kind}`}>
           <div className="entry-head">
-            <span className="entry-who">{e.kind === "user" ? "You" : e.who || (e.kind === "research" ? "Researcher" : "Vox")}</span>
-            {e.tier && e.kind !== "user" && <span className="entry-tier">{tierLabel[e.tier] || e.tier}</span>}
+            <span className="entry-who">{e.who || (e.kind === "user" ? "You" : e.kind === "research" ? "Researcher" : "Vox")}</span>
+            {e.tier && e.kind !== "task" && <span className="entry-tier">{tierLabel[e.tier] || e.tier}</span>}
             <time className="entry-time">{TIME.format(e.ts)}</time>
           </div>
           <p className="entry-text">{e.text}</p>

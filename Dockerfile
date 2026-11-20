@@ -14,8 +14,6 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY agents/ agents/
-COPY bolna/ bolna/
-COPY scripts/ scripts/
 COPY --from=frontend /app/frontend/dist frontend/dist
 
 # Render, Railway and Fly inject PORT; default to 8000 elsewhere.
