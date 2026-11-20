@@ -50,6 +50,7 @@ async def brief(description: str) -> dict:
         f"3-{MAX_IMAGES} images, slot names are short lowercase ids):\n{BRIEF_SHAPE}"
     )
     data: dict = {}
+    model_errors: list[llm.LLMError] = []
     # Models occasionally answer with an empty or half-shaped object; one retry fixes almost all of them.
     for attempt in range(2):
         try:
@@ -57,12 +58,16 @@ async def brief(description: str) -> dict:
             data = parse_json(raw)
         except (llm.LLMError, ValueError) as e:
             log.warning("design brief failed (attempt %d): %s", attempt + 1, e)
+            if isinstance(e, llm.LLMError):
+                model_errors.append(e)
             data = {}
             continue
         if data.get("sections") and data.get("palette"):
             break
         log.warning("design brief incomplete (attempt %d): keys %s", attempt + 1, sorted(data))
     if not data.get("sections"):
+        if len(model_errors) == 2:
+            raise model_errors[-1]  # e.g. no AI key, or quota used up: worth telling the user
         return {}
     data["images"] = [i for i in data.get("images", []) if isinstance(i, dict) and i.get("query")][:MAX_IMAGES]
     return data

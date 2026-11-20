@@ -56,9 +56,12 @@ async def plan(project_id: str, description: str) -> dict:
     """researcher only: a design brief, stored as a draft for the user to approve."""
     async with _locks[project_id]:
         events.publish(project_id, {"type": "job_started", "kind": "plan", "instruction": description, "tier": "research"})
-        brief = await research.brief(description)
+        try:
+            brief = await research.brief(description)
+        except llm.LLMError as e:
+            return _fail(project_id, description, str(e))
         if not brief:
-            return _fail(project_id, description, "The researcher couldn't plan the site. The AI model may be busy")
+            return _fail(project_id, description, "The researcher couldn't plan the site. Try describing it again")
         spoken = research.spoken_plan(brief)
         store.update(project_id, draft={"description": description, "brief": brief, "spoken": spoken})
         _publish_research(project_id, brief, [])
@@ -71,10 +74,10 @@ async def generate(project_id: str, description: str, brief: dict | None = None)
     """Builds a whole new site. brief is an approved draft; without one the researcher runs first."""
     async with _locks[project_id]:
         events.publish(project_id, {"type": "job_started", "kind": "generate", "instruction": description, "tier": "research" if brief is None else "team"})
-        notes, brief = await _plan_site(project_id, description, brief)
-        events.publish(project_id, {"type": "job_stage", "tier": "architect"})
         current = store.read_files(project_id)
         try:
+            notes, brief = await _plan_site(project_id, description, brief)
+            events.publish(project_id, {"type": "job_stage", "tier": "architect"})
             raw = await llm.complete(prompts.GENERATE_SYSTEM, prompts.generate_user(description, notes), "architect", FULL_MAX_TOKENS)
             files, deleted = patches.replace_all(current, _clean_files(patches.parse_full(raw)))
             summary = _clean_text(patches.summary(raw)) or "Built your new website."
