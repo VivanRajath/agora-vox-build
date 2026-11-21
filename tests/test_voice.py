@@ -338,3 +338,20 @@ def test_change_image_trusts_the_users_words_over_a_bare_this(monkeypatch):
         vox_tools.turn_text.set(said)
         asyncio.run(vox_tools.TOOLS["change_image"].handler(meta["id"], {"target": "this"}))
     assert seen == ["Can you change the parkour photo?", "this"]
+
+
+def test_clicking_an_element_is_described_and_announced():
+    from backend import prompts_vox
+    sel = {"path": "section#hero > h1", "html": '<h1 class="x">Who is <span>Spider-Man</span>?</h1>', "vox_id": "Hero"}
+    speech = prompts_vox.selection_speech(sel)
+    assert speech == "That's the main heading in the hero section. It says: Who is Spider-Man? What would you like to change?"
+    assert voice._announcement("p", {"type": "selection", "selection": sel}) == speech
+    assert voice._announcement("p", {"type": "selection", "selection": None}) is None
+    meta = store.create()
+    store.set_selection(meta["id"], sel)
+    assert 'It reads: "Who is Spider-Man?"' in prompts_vox.state(meta["id"])
+
+
+def test_goodbyes_are_not_claimed_actions():
+    assert not vox_llm.claims_action("Got it. If you need anything else, just let me know. Have a great day!")
+    assert vox_llm.claims_action("Sure, swapping that photo now.")

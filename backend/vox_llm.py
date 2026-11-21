@@ -81,8 +81,8 @@ def _history(messages: list[dict]) -> list[dict]:
 
 # Small conversation models sometimes say they're doing something without calling the tool for it.
 CLAIM_RE = re.compile(
-    r"\b(i'?ll|i will|let me|right away|on it|changing|swapping|updating|adding|removing|replacing|finding|"
-    r"building|making|publishing|creating|fixing|switching|undoing)\b",
+    r"\b(right away|on it|(?:i'?m |i am )?(?:changing|swapping|updating|adding|removing|replacing|building|finding|"
+    r"making|publishing|creating|fixing|switching|undoing) (?:it|that|this|the|your|a|an|them|those|now))\b",
     re.IGNORECASE,
 )
 NUDGE = (

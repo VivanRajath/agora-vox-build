@@ -3,6 +3,8 @@
 Agora's history only keeps spoken text, not tool results, so every turn re-states
 what the project looks like now (versions, latest job, draft plan, publication).
 """
+import html as html_lib
+import re
 from functools import lru_cache
 
 from . import events, store, users, vox_tools
@@ -57,7 +59,13 @@ def state(project_id: str) -> str:
         detail = job.get("summary") or job.get("reason") or job.get("stage") or ""
         lines.append(f"- Latest job ({job.get('instruction', '')[:80]}): {job['state']} {detail}".rstrip())
     if meta.get("selection"):
-        lines.append(f"- The user has clicked {meta['selection'].get('label', 'an element')} in the preview, so 'this' means that element.")
+        f = selection_facts(meta["selection"])
+        where = f" in the {f['section']} section" if f.get("section") else ""
+        content = f' It reads: "{f["text"]}".' if f.get("text") else ""
+        lines.append(
+            f"- The user has clicked {f.get('kind', 'an element')}{where} in the preview, so 'this' means that element.{content} "
+            "If they ask what it is or to read it out, read that back to them."
+        )
     publishing = meta.get("publish") or {}
     if publishing.get("state") in ("pushing", "deploying", "checking"):
         lines.append(f"- Publishing to GitHub Pages is in progress ({publishing['state']}); use publication_status.")
@@ -72,6 +80,50 @@ def state(project_id: str) -> str:
     owner = users.get(meta.get("owner"))
     lines.append(f"- GitHub is {'connected' if users.github_token(owner) else 'not connected'}.")
     return "\n".join(lines)
+
+
+KINDS = {
+    "img": "the photo", "picture": "the photo", "h1": "the main heading", "h2": "the heading", "h3": "the heading",
+    "h4": "the heading", "p": "the text", "a": "the link", "button": "the button", "section": "the section",
+    "nav": "the menu", "header": "the header", "footer": "the footer", "li": "the list item", "form": "the form",
+    "input": "the input field", "span": "the text", "blockquote": "the quote", "figure": "the picture", "ul": "the list",
+}
+
+
+def _words_for(name: str) -> str:
+    """'CharacterBio' or 'character-bio' -> 'character bio'."""
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", name or "").replace("-", " ").lower().strip()
+
+
+def selection_facts(selection: dict | None) -> dict:
+    """What the clicked element is, in words: kind, its text (or a photo's alt), and its section."""
+    if not selection:
+        return {}
+    html = selection.get("html", "")
+    tag = (re.match(r"\s*<([a-zA-Z0-9]+)", html) or [None, ""])[1].lower()
+    alt = re.search(r'alt="([^"]*)"', html)
+    text = html_lib.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))).strip()
+    text = re.sub(r"\s+([?.!,:;])", r"\1", text)
+    if tag == "img":
+        text = html_lib.unescape(alt.group(1)) if alt else ""
+    section = _words_for(selection.get("vox_id", "")) or _words_for((re.search(r"section#([\w-]+)", selection.get("path", "")) or [None, ""])[1])
+    return {"kind": KINDS.get(tag, "that element"), "text": text[:300], "section": section}
+
+
+def selection_speech(selection: dict | None) -> str:
+    """What Vox says the moment the user clicks something."""
+    f = selection_facts(selection)
+    if not f:
+        return ""
+    where = f" in the {f['section']} section" if f["section"] else ""
+    if f["kind"] == "the photo":
+        what = f"That's the photo{': ' + f['text'] if f['text'] else ''}{where}."
+    elif f["text"]:
+        said = f["text"][:160].rstrip()
+        what = f"That's {f['kind']}{where}. It says: {said}{'' if said[-1:] in '.?!' else '.'}"
+    else:
+        what = f"That's {f['kind']}{where}."
+    return f"{what} What would you like to change?"
 
 
 def system(project_id: str) -> str:

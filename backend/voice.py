@@ -163,6 +163,8 @@ async def _watch(agent_id: str, project_id: str) -> None:
 
 def _announcement(project_id: str, event: dict) -> str | None:
     kind = event.get("type")
+    if kind == "selection" and event.get("selection"):
+        return prompts_vox.selection_speech(event["selection"])
     if kind in ("job_done", "job_failed"):
         if project_id not in jobs.announce:
             return None  # the voice turn already said the result
@@ -186,18 +188,20 @@ def _on_event(project_id: str, event: dict) -> None:
         return
     text = _announcement(project_id, event)
     if text:
-        asyncio.get_running_loop().create_task(speak(agent_id, text))
+        # A click is the user acting now, so it cuts in; results wait for Vox to finish its sentence.
+        priority = "INTERRUPT" if event.get("type") == "selection" else "APPEND"
+        asyncio.get_running_loop().create_task(speak(agent_id, text, priority))
 
 
-async def speak(agent_id: str, text: str) -> None:
+async def speak(agent_id: str, text: str, priority: str = "APPEND") -> None:
     from .vox_llm import speakable  # vox_llm imports this module
     text = speakable(text)
     data = text.encode("utf-8")[:500].decode("utf-8", "ignore")  # Agora's limit is 512 bytes
     url = f"{config.AGORA_API_BASE}/projects/{config.AGORA_APP_ID}/agents/{agent_id}/speak"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            # APPEND: after whatever Vox is saying now; the user can talk over it.
-            r = await client.post(url, headers=_auth_header(), json={"text": data, "priority": "APPEND", "interruptable": True})
+            # The user can always talk over an announcement.
+            r = await client.post(url, headers=_auth_header(), json={"text": data, "priority": priority, "interruptable": True})
         if r.status_code >= 400:
             _agora_error(r)
         else:
