@@ -54,9 +54,17 @@ def state(project_id: str) -> str:
         version = next((v for v in meta["versions"] if v["n"] == meta["current"]), {})
         lines.append(f"- The website for {brief.get('business') or 'the user'} is at version {meta['current']}: {version.get('summary', '')}")
     if meta.get("draft"):
-        lines.append(f"- A plan is waiting for approval: {meta['draft'].get('spoken', '')}")
+        lines.append(
+            f"- A plan is waiting for approval: {meta['draft'].get('spoken', '')}. If the user agrees in ANY language "
+            "(yes, ಹೌದು, हाँ, go ahead...), call build_site NOW; never ask again."
+        )
     if meta.get("oneshot_pending") and meta["current"] == 0:
-        lines.append(f"- You read back this one-shot request and are waiting for a yes: {meta['oneshot_pending'].get('heard', '')}")
+        lines.append(
+            f"- You already read back this one-shot request and asked to build it: {meta['oneshot_pending'].get('heard', '')}. "
+            "If the user agrees in ANY language or words (yes, ok, start, go ahead, ಹೌದು, ಸರಿ, ಶುರು ಮಾಡಿ, हाँ, ठीक है...), "
+            "call create_site with confirmed: true NOW. Never ask the same question twice. Only if they change the "
+            "request, call create_site again with the new request."
+        )
     job = events.job(project_id)
     if job:
         detail = job.get("summary") or job.get("reason") or job.get("stage") or ""

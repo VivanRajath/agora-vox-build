@@ -389,3 +389,43 @@ def test_brief_placeholders_are_not_answers():
     r = asyncio.run(vox_tools.run(meta["id"], "submit_brief", {"business_name": "Delhi Chaat", "what_it_does": "sells chaat",
                                                                 "target_audience": "?", "goal": "?", "theme": "unknown"}))
     assert r["status"] == "failed" and "target audience" in r["message"]
+
+
+@pytest.mark.parametrize("text,ok", [
+    ("ಹೌದು.", True), ("ಶುರು ಮಾಡಿ.", True), ("ಸರಿ, ಮಾಡಿ", True), ("हाँ, बना दो", True), ("ठीक है", True),
+    ("ಹೌದು, ಆದರೆ ಬಣ್ಣ ಕೆಂಪು ಮಾಡಿ", False), ("ಬೇಡ", False), ("नहीं, नाम बदलो", False),
+    ("ನನಗೆ ಆದಿತ್ಯ ಬೇಕರಿ ಎಂಬ ಹೆಸರಿನಲ್ಲಿ ಒಂದು ವೆಬ್‌ಸೈಟ್ ಬೇಕು.", False),
+])
+def test_yes_in_kannada_and_hindi(text, ok):
+    assert vox_llm.is_approval(text) is ok
+
+
+def test_kannada_yes_builds_the_read_back_site(monkeypatch):
+    import asyncio
+    from backend.editor import engine
+    meta = store.create()
+    store.update(meta["id"], mode="oneshot", oneshot_pending={"description": "A bakery website called Aditya Bakery.", "heard": "Aditya Bakery", "ts": __import__("time").time()})
+    built = []
+
+    async def fake_generate(pid, description, brief=None):
+        built.append(description)
+        return {"ok": True, "message": "Built it."}
+
+    async def no_model(*a, **k):
+        raise AssertionError("a plain yes must not go to the model")
+
+    monkeypatch.setattr(engine, "generate", fake_generate)
+    monkeypatch.setattr(llm, "complete", no_model)  # translation of the reply is skipped on error-free path below
+    monkeypatch.setattr(llm, "chat", no_model)
+
+    async def same(text, code):
+        return text
+
+    from backend import languages
+    monkeypatch.setattr(languages, "translate", same)
+    client.post(
+        f"/llm/{meta['id']}/chat/completions",
+        headers={"Authorization": f"Bearer {voice.make_llm_token(meta['id'])}"},
+        json={"stream": True, "messages": [{"role": "assistant", "content": "ಮಾಡಲೇ?"}, {"role": "user", "content": "ಹೌದು."}]},
+    )
+    assert built == ["A bakery website called Aditya Bakery."]

@@ -176,7 +176,11 @@ async def create_site(project_id: str, args: dict) -> dict:
         heard = str(args.get("heard") or "").strip() or description[:120]
         store.update(project_id, oneshot_pending={"description": description, "heard": heard, "ts": time.time()})
         events.publish(project_id, {"type": "plan", "spoken": f"I heard: {heard}"})
-        return {"status": "needs_approval", "message": f"Just to check, you want {heard}. Shall I build it?"}
+        return {
+            "status": "needs_approval",
+            "message": f"Just to check, you want {heard}. Shall I build it?",
+            "note": "When the user agrees, in any language, call create_site with confirmed: true. Don't ask again.",
+        }
     if spoken:
         description = pending["description"]
     store.update(project_id, draft=None, oneshot_pending=None)

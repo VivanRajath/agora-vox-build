@@ -119,10 +119,35 @@ CHANGE_RE = re.compile(r"\b(but|change|instead|add|remove|make|without|except|no
 SPEAK_VERBATIM = {"needs_approval", "name_taken", "needs_github"}
 
 
+# The same in Kannada and Hindi (and the romanised forms speech recognition sometimes writes).
+# Indian scripts use combining vowel signs that \w doesn't match, so these are matched as whole words.
+YES_WORDS = {
+    # Kannada
+    "ಹೌದು", "ಹೂಂ", "ಹೂ", "ಹಾ", "ಸರಿ", "ಓಕೆ", "ಆಯ್ತು", "ಆಗಲಿ", "ಮಾಡಿ", "ಮಾಡು", "ಶುರು", "ನಿರ್ಮಿಸಿ", "ಕಟ್ಟಿ", "ಬೇಕು",
+    "ಪ್ರಾರಂಭಿಸಿ", "ಚೆನ್ನಾಗಿದೆ", "ಖಂಡಿತ", "ಪಬ್ಲಿಷ್",
+    # Hindi
+    "हाँ", "हां", "हा", "जी", "ठीक", "बिल्कुल", "बनाओ", "बना", "बनाइए", "बनाइये", "शुरू", "करो", "करिए", "चलो", "अच्छा", "पक्का",
+    # romanised
+    "haan", "han", "houdu", "howdu", "sari", "shuru", "maadi", "madi", "theek", "thik", "banao", "karo", "chalo",
+}
+NO_WORDS = {
+    # Kannada: no, don't, but, change, wait, instead
+    "ಬೇಡ", "ಇಲ್ಲ", "ಆದರೆ", "ಬದಲಿಸಿ", "ಬದಲಾಯಿಸಿ", "ಬದಲು", "ನಿಲ್ಲಿ", "ತಡೆ", "ಏನು", "ಯಾಕೆ", "ಹೇಗೆ",
+    # Hindi
+    "नहीं", "नही", "मत", "लेकिन", "पर", "बदलो", "बदलिए", "रुको", "रुकिए", "क्या", "क्यों", "कैसे",
+    # romanised
+    "beda", "illa", "nahi", "nahin", "mat", "lekin",
+}
+
+
 def is_approval(text: str) -> bool:
     words = re.sub(r"[^\w\s']", " ", text.lower()).strip()
     words = re.sub(r"\s+", " ", words)
-    return bool(words) and len(words.split()) <= 8 and bool(YES_RE.match(words)) and not CHANGE_RE.search(words)
+    if bool(words) and len(words.split()) <= 8 and bool(YES_RE.match(words)) and not CHANGE_RE.search(words):
+        return True
+    # Kannada, Hindi...: a short reply with a yes word and no "no"/"but"/question word.
+    tokens = re.sub(r"[,.!?।|\"“”'’]", " ", text.lower()).split()
+    return 0 < len(tokens) <= 6 and any(t in YES_WORDS for t in tokens) and not any(t in NO_WORDS for t in tokens)
 
 
 def approved_action(project_id: str, user_text: str) -> tuple[str, dict] | None:
