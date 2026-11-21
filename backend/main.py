@@ -137,6 +137,16 @@ async def select(project_id: str, request: Request):
     return {"ok": True}
 
 
+@app.post("/api/projects/{project_id}/mode")
+async def set_mode(project_id: str, request: Request):
+    """The One-shot / Business switch. Vox picks it up on its next turn (the state is re-read every turn)."""
+    _require_project(project_id)
+    result = await vox_tools.run(project_id, "set_mode", {"mode": (await request.json()).get("mode", "")})
+    if result["status"] != "done":
+        raise HTTPException(400, result["message"])
+    return store.load_meta(project_id)
+
+
 @app.get("/api/projects/{project_id}/events")
 async def project_events(project_id: str):
     _require_project(project_id)

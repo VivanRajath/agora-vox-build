@@ -18,6 +18,7 @@ export const api = {
   undo: (id) => request(`/api/projects/${id}/undo`, { method: "POST" }),
   restore: (id, n) => request(`/api/projects/${id}/restore/${n}`, { method: "POST" }),
   select: (id, selection) => request(`/api/projects/${id}/select`, { method: "POST", body: JSON.stringify({ selection }) }),
+  setMode: (id, mode) => request(`/api/projects/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
   publish: (id, body) => request(`/api/projects/${id}/publish`, { method: "POST", body: JSON.stringify(body) }),
   downloadUrl: (id) => `/api/projects/${id}/download`,
   pushGithub: (id, repo, isPrivate) =>

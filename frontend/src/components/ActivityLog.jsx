@@ -1,8 +1,14 @@
 import { useEffect, useRef } from "react";
 
+const BRIEF_LABEL = {
+  business_name: "Business", what_it_does: "What it does", target_audience: "Customers", goal: "Goal",
+  theme: "Theme", colours: "Colours", must_haves: "Must-haves", tone: "Tone", location: "Location",
+  contact: "Contact", notes: "Notes",
+};
+
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
-export default function ActivityLog({ entries, tierLabel, isBlank, onAction }) {
+export default function ActivityLog({ entries, tierLabel, isBlank, mode, onAction }) {
   const endRef = useRef(null);
   // Braces matter: newer browsers return a Promise from scrollIntoView, which React would treat as a cleanup.
   useEffect(() => {
@@ -15,7 +21,9 @@ export default function ActivityLog({ entries, tierLabel, isBlank, onAction }) {
         <p className="feed-empty-title">{isBlank ? "Start with a description" : "No changes yet in this session"}</p>
         <p>
           {isBlank
-            ? "Tell Vox what the business is, who it's for and how it should feel. The researcher plans it and Vox reads you the plan; once you approve, Font Knight, the copywriter and the architect build it as a React site and a design critic reviews it."
+            ? mode === "oneshot"
+              ? "One-shot: say or type the whole idea in one sentence. The researcher works out the palette, fonts, sections and photos, and the team builds it straight away."
+              : "Business: Vox asks about your business, customers, goal and style, one question at a time. Your answers become a brief, the researcher plans from it, and once you approve the plan the team builds it."
             : "Ask for a change by voice or type it below. Each request and its result appears here."}
         </p>
       </div>
@@ -32,6 +40,16 @@ export default function ActivityLog({ entries, tierLabel, isBlank, onAction }) {
             <time className="entry-time">{TIME.format(e.ts)}</time>
           </div>
           <p className="entry-text">{e.text}</p>
+          {e.fields && (
+            <dl className="brief">
+              {Object.entries(e.fields).map(([k, v]) => (
+                <div key={k}>
+                  <dt>{BRIEF_LABEL[k] || k}</dt>
+                  <dd>{v}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
           {e.fonts?.heading && (
             <div className="specimen">
               {e.fonts.link && <link rel="stylesheet" href={e.fonts.link} />}

@@ -24,6 +24,9 @@ const TIER_LABEL = {
 const AGENT_LABEL = { fontknight: "Font Knight", copywriter: "Copywriter", critic: "Design critic" };
 const TOOL_LABEL = {
   plan_site: "Planning",
+  create_site: "One-shot build",
+  submit_brief: "Business brief",
+  set_mode: "Mode",
   build_site: "Building the site",
   publish_site: "Publishing",
   publication_status: "Checking the live site",
@@ -224,6 +227,13 @@ export default function App() {
         case "selection":
           setSelection(ev.selection);
           break;
+        case "report":
+          addLog({ kind: "report", who: "Business brief", text: "What Vox learned in the interview, sent to the planning team:", fields: ev.fields });
+          break;
+        case "mode":
+          setMeta((m) => ({ ...m, mode: ev.mode }));
+          addLog({ kind: "info", text: ev.mode === "oneshot" ? "Switched to one-shot mode" : "Switched to business mode" });
+          break;
         case "transcript":
           addLog({ kind: ev.role === "user" ? "user" : "vox", text: ev.text });
           if (ev.role === "user") {
@@ -234,6 +244,7 @@ export default function App() {
           }
           break;
         case "tool":
+          if (ev.name === "set_mode") break; // the "mode" event says it once
           addLog({
             kind: ev.status === "failed" ? "error" : "tool",
             who: TOOL_LABEL[ev.name] || ev.name,
@@ -370,6 +381,11 @@ export default function App() {
             voice={voice}
             heard={heard}
             thinking={thinking}
+            mode={meta.mode || "business"}
+            onModeChange={(mode) => {
+              setMeta((m) => ({ ...m, mode }));
+              api.setMode(projectId, mode).catch(() => {});
+            }}
             config={config}
             aiReady={aiReady}
             onOpenSettings={() => setDialog("settings")}
@@ -391,7 +407,7 @@ export default function App() {
           </div>
           <div className="tab-panel" role="tabpanel">
             {tab === "activity" ? (
-              <ActivityLog entries={log} tierLabel={TIER_LABEL} isBlank={isBlank} onAction={runAction} />
+              <ActivityLog mode={meta.mode || "business"} entries={log} tierLabel={TIER_LABEL} isBlank={isBlank} onAction={runAction} />
             ) : (
               <History
                 versions={meta.versions}

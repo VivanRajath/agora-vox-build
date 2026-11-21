@@ -136,7 +136,7 @@ async def converse(project_id: str, messages: list[dict]):
         events.publish(project_id, {"type": "transcript", "role": "assistant", "text": f"{filler} {reply}".strip()})
         return
 
-    tools = vox_tools.specs()
+    tools = vox_tools.specs(project_id)
     try:
         for _ in range(MAX_ROUNDS):
             reply = await llm.chat(prompts_vox.system(project_id), convo, "vox", tools=tools, max_tokens=REPLY_TOKENS)

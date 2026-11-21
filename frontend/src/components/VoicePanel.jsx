@@ -9,10 +9,15 @@ const STATUS = {
   error: "Talk to Vox",
 };
 
+const MODES = [
+  ["oneshot", "One-shot", "One sentence, built straight away"],
+  ["business", "Business", "Vox interviews you, then plans"],
+];
+
 // Relative bar heights; the live volume scales them.
 const BARS = [0.45, 0.8, 1, 0.65, 0.35];
 
-export default function VoicePanel({ voice, heard, thinking, config, aiReady, onOpenSettings, picking, onTogglePick, selection, onClearSelection, isBlank }) {
+export default function VoicePanel({ voice, heard, thinking, mode, onModeChange, config, aiReady, onOpenSettings, picking, onTogglePick, selection, onClearSelection, isBlank }) {
   const live = voice.state === "live";
   const connecting = voice.state === "connecting";
   const voiceReady = config?.voice_enabled;
@@ -20,6 +25,16 @@ export default function VoicePanel({ voice, heard, thinking, config, aiReady, on
 
   return (
     <section className="voice" aria-label="Voice">
+      {isBlank && (
+        <div className="mode-switch" role="radiogroup" aria-label="How to make the site">
+          {MODES.map(([id, name, hint]) => (
+            <button key={id} role="radio" aria-checked={mode === id} className={mode === id ? "is-on" : ""} onClick={() => onModeChange(id)}>
+              <strong>{name}</strong>
+              <span>{hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {(live || connecting) && <VoiceOrb voice={voice} heard={heard} thinking={thinking} />}
       <button
         className={`talk ${live ? "is-live" : ""} ${connecting ? "is-connecting" : ""} ${live && voice.speaking ? "is-speaking" : ""}`}
@@ -37,7 +52,9 @@ export default function VoicePanel({ voice, heard, thinking, config, aiReady, on
                 : connecting
                   ? "Allow the microphone if your browser asks."
                   : isBlank
-                    ? "Describe the website you want, out loud."
+                    ? mode === "oneshot"
+                      ? "Describe the whole site in one go, e.g. a comic-book themed site for a movie theatre."
+                      : "Vox asks about your business, customers and style."
                     : "Ask for any change, out loud."}
           </span>
         </span>

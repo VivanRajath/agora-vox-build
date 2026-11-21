@@ -44,8 +44,31 @@ def tool(name: str, description: str, properties: dict | None = None, required: 
     return register
 
 
-def specs() -> list[dict]:
-    return [t.spec() for t in TOOLS.values()]
+# How a new site gets made. "oneshot": one request, the researcher fills in the rest and the team
+# builds straight away. "business": Vox interviews the owner, the answers become a report, the
+# researcher plans from it and the user approves the plan before the build.
+MODES = ("business", "oneshot")
+DEFAULT_MODE = "business"
+
+# Tools the model shouldn't see in a given situation, so it can't take the other mode's path.
+_HIDDEN = {
+    ("blank", "oneshot"): {"plan_site", "build_site", "submit_brief", "edit_site", "undo_change", "publish_site", "publication_status"},
+    ("blank", "business"): {"plan_site", "create_site", "edit_site", "undo_change", "publish_site", "publication_status"},
+    ("built", "oneshot"): {"create_site", "submit_brief", "set_mode"},
+    ("built", "business"): {"create_site", "submit_brief", "set_mode"},
+}
+
+
+def mode(meta: dict) -> str:
+    return meta.get("mode") if meta.get("mode") in MODES else DEFAULT_MODE
+
+
+def specs(project_id: str | None = None) -> list[dict]:
+    if not project_id:
+        return [t.spec() for t in TOOLS.values()]
+    meta = store.load_meta(project_id)
+    hidden = _HIDDEN[("blank" if meta["current"] == 0 else "built", mode(meta))]
+    return [t.spec() for t in TOOLS.values() if t.name not in hidden]
 
 
 async def run(project_id: str, name: str, args: dict | None = None) -> dict:
@@ -107,6 +130,99 @@ async def build_site(project_id: str, args: dict) -> dict:
     else:
         coro = engine.generate(project_id, draft["description"], brief=draft["brief"])
     return await jobs.answer_voice(project_id, coro)
+
+
+# ---------------------------------------------------------------------------
+# Modes: one-shot and business interview
+# ---------------------------------------------------------------------------
+
+@tool(
+    "create_site",
+    "One-shot mode: build a whole new website straight away from the user's single request. The researcher "
+    "works out the rest (palette, typography, sections, photos), so don't ask follow-up questions.",
+    {"description": {
+        "type": "string",
+        "description": "The user's request expanded into one rich English paragraph: what the site is for, the theme in "
+                       "detail (mood, colours, imagery, type feel), fitting sections, and every name, place or detail they gave.",
+    }},
+    ["description"],
+    filler="Love it. Building it now, the whole team is on it.",
+)
+async def create_site(project_id: str, args: dict) -> dict:
+    description = str(args.get("description", "")).strip()
+    if not description:
+        return {"status": "failed", "message": "Tell me what the website is for, in one sentence."}
+    if store.load_meta(project_id)["current"] > 0:
+        return {"status": "failed", "message": "This project already has a site. Tell me what to change, or start a new project."}
+    if (events.job(project_id) or {}).get("state") == "working":
+        return {"status": "in_progress", "message": "I'm already building it. It will appear on screen shortly."}
+    store.update(project_id, draft=None)
+    return await jobs.answer_voice(project_id, engine.generate(project_id, description))
+
+
+BRIEF_FIELDS = {
+    "business_name": "Name of the business.",
+    "what_it_does": "What the business does or sells.",
+    "target_audience": "Who the customers are (age, type, why they come).",
+    "goal": "What visitors should do on the site: book, buy, call, visit, enquire...",
+    "theme": "Look and feel or theme, in the user's words (e.g. 'warm and rustic', 'Spider-Man style comic look').",
+    "colours": "Colours the user wants, if any.",
+    "must_haves": "Sections or features they asked for (menu, prices, gallery, booking form, reviews...).",
+    "tone": "How the words should sound (friendly, premium, playful...).",
+    "location": "City or area.",
+    "contact": "Phone, email, address or opening hours they gave.",
+    "notes": "Anything else they said that matters.",
+}
+BRIEF_REQUIRED = ["business_name", "what_it_does", "target_audience", "goal", "theme"]
+
+
+def brief_report(fields: dict) -> str:
+    """The interview as a detailed report: the researcher plans the site from it."""
+    labels = {
+        "business_name": "Business", "what_it_does": "What it does", "target_audience": "Target customers",
+        "goal": "Main goal of the site", "theme": "Theme and feel", "colours": "Colours", "must_haves": "Must-have sections",
+        "tone": "Tone of voice", "location": "Location", "contact": "Contact details", "notes": "Other notes",
+    }
+    lines = ["Business brief from a voice interview with the owner. Build the website around it."]
+    lines += [f"- {labels[k]}: {fields[k]}" for k in BRIEF_FIELDS if fields.get(k)]
+    return "\n".join(lines)
+
+
+@tool(
+    "submit_brief",
+    "Business mode: after interviewing the owner, send everything you learned. The researcher turns it into a site "
+    "plan; read the plan out and ask whether to build it or change anything.",
+    {k: {"type": "string", "description": v} for k, v in BRIEF_FIELDS.items()},
+    BRIEF_REQUIRED,
+    filler="Thanks, that's everything I need. Putting your brief together.",
+)
+async def submit_brief(project_id: str, args: dict) -> dict:
+    fields = {k: str(args.get(k) or "").strip() for k in BRIEF_FIELDS}
+    fields = {k: v for k, v in fields.items() if v and v.lower() not in ("none", "n/a", "unknown", "not given")}
+    missing = [k.replace("_", " ") for k in BRIEF_REQUIRED if not fields.get(k)]
+    if missing:
+        return {"status": "failed", "message": f"I still need: {', '.join(missing)}. Ask the user about that next."}
+    store.update(project_id, interview=fields)
+    events.publish(project_id, {"type": "report", "fields": fields})
+    return await plan_site(project_id, {"description": brief_report(fields)})
+
+
+@tool(
+    "set_mode",
+    "Switch how a new site is made: 'oneshot' builds straight away from one request; 'business' interviews the owner first.",
+    {"mode": {"type": "string", "enum": list(MODES)}},
+    ["mode"],
+    filler="Switching.",
+)
+async def set_mode(project_id: str, args: dict) -> dict:
+    new = str(args.get("mode", "")).strip().lower().replace("-", "").replace(" ", "")
+    if new not in MODES:
+        return {"status": "failed", "message": "The modes are one-shot and business."}
+    store.update(project_id, mode=new)
+    events.publish(project_id, {"type": "mode", "mode": new})
+    if new == "oneshot":
+        return {"status": "done", "message": "One-shot mode: describe the website in one go and I'll build it straight away."}
+    return {"status": "done", "message": "Business mode: I'll ask you a few questions about your business first."}
 
 
 # ---------------------------------------------------------------------------
@@ -279,5 +395,8 @@ def typed_tool(project_id: str, text: str) -> tuple[str, dict]:
             return "build_site", {}
         return "plan_site", {"description": f"{meta['draft']['description']} {text}"}
     if meta["current"] == 0:
+        # Typing is already "one request", so one-shot builds it; business plans it for approval.
+        if mode(meta) == "oneshot":
+            return "create_site", {"description": text}
         return "plan_site", {"description": text}
     return "edit_site", {"instruction": text}

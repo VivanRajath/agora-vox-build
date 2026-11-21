@@ -5,7 +5,7 @@ what the project looks like now (versions, latest job, draft plan, publication).
 """
 from functools import lru_cache
 
-from . import events, store, users
+from . import events, store, users, vox_tools
 from .config import ROOT_DIR
 
 
@@ -15,11 +15,29 @@ def soul() -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else "You are Vox, a friendly voice web designer."
 
 
+MODE_RULES = {
+    "oneshot": """Mode: ONE-SHOT. The user describes the website in one go and you build it straight away: no interview,
+no plan to approve. As soon as you know what the site is for, call create_site with the request expanded into one rich
+English paragraph (what it is, the theme in detail: mood, colours, imagery, type feel; fitting sections; every name, place
+and detail they said). Only ask a question if the request is empty or you can't tell what the site is for.""",
+    "business": """Mode: BUSINESS. Interview the owner like a friendly web designer before anything is planned.
+Ask ONE short question per turn, in this order, skipping anything already answered:
+1) the business name and what it does, 2) who the customers are, 3) what visitors should do on the site (book, buy,
+call, visit, enquire), 4) the look and feel or theme, and any colours, 5) must-have sections or features,
+6) location and contact details or opening hours (optional; skip if they don't know).
+Acknowledge each answer in a few words ("Families with kids, got it."). When you have 1 to 4, or the user says "that's all"
+or "just build it", call submit_brief with everything you learned, in English. It returns a plan: read it out and ask
+"Shall I build it, or change anything?". On yes, call build_site. If they want changes, call submit_brief again with them.""",
+}
+
+
 def greeting(meta: dict) -> str:
     business = (meta.get("brief") or {}).get("business")
     if meta.get("current", 0) > 0 and business:
         return f"Hi again! What would you like to change on the {business} website?"
-    return "Hi, I'm Vox. Tell me about your business, and I'll plan a website for it."
+    if vox_tools.mode(meta) == "oneshot":
+        return "Hi, I'm Vox. Describe the website you want in one go, and I'll build it straight away."
+    return "Hi, I'm Vox. Let's plan your website together. What's your business called, and what does it do?"
 
 
 def state(project_id: str) -> str:
@@ -28,6 +46,7 @@ def state(project_id: str) -> str:
     lines = ["Current project state (updated every turn, trust it over your memory):"]
     if meta["current"] == 0:
         lines.append("- The website is still blank.")
+        lines.append(MODE_RULES[vox_tools.mode(meta)])
     else:
         version = next((v for v in meta["versions"] if v["n"] == meta["current"]), {})
         lines.append(f"- The website for {brief.get('business') or 'the user'} is at version {meta['current']}: {version.get('summary', '')}")

@@ -190,3 +190,73 @@ def test_plan_is_spoken_verbatim(monkeypatch):
 
 def test_speakable_strips_reasoning():
     assert vox_llm.speakable("<think>plan the call</think>Building it now. </think") == "Building it now."
+
+
+# --- one-shot and business modes ----------------------------------------------
+
+def _tool_names(pid):
+    return {s["name"] for s in vox_tools.specs(pid)}
+
+
+def test_mode_decides_which_tools_vox_sees():
+    meta = store.create()
+    assert vox_tools.mode(meta) == "business"
+    names = _tool_names(meta["id"])
+    assert "submit_brief" in names and "create_site" not in names and "plan_site" not in names
+    store.update(meta["id"], mode="oneshot")
+    names = _tool_names(meta["id"])
+    assert "create_site" in names and "submit_brief" not in names and "build_site" not in names
+
+
+def test_set_mode_endpoint_and_greeting():
+    from backend import prompts_vox
+    meta = store.create()
+    r = client.post(f"/api/projects/{meta['id']}/mode", json={"mode": "oneshot"})
+    assert r.status_code == 200 and r.json()["mode"] == "oneshot"
+    assert "in one go" in prompts_vox.greeting(store.load_meta(meta["id"]))
+    assert "ONE-SHOT" in prompts_vox.state(meta["id"])
+    assert client.post(f"/api/projects/{meta['id']}/mode", json={"mode": "nope"}).status_code == 400
+
+
+def test_typed_request_follows_mode():
+    meta = store.create()
+    assert vox_tools.typed_tool(meta["id"], "a bakery site")[0] == "plan_site"
+    store.update(meta["id"], mode="oneshot")
+    assert vox_tools.typed_tool(meta["id"], "a bakery site") == ("create_site", {"description": "a bakery site"})
+
+
+def test_create_site_generates_straight_away(monkeypatch):
+    import asyncio
+    from backend.editor import engine
+    meta = store.create()
+    seen = {}
+
+    async def fake_generate(pid, description, brief=None):
+        seen["description"], seen["brief"] = description, brief
+        return {"ok": True, "message": "Built it."}
+
+    monkeypatch.setattr(engine, "generate", fake_generate)
+    result = asyncio.run(vox_tools.run(meta["id"], "create_site", {"description": "a comic-book themed movie theatre"}))
+    assert seen == {"description": "a comic-book themed movie theatre", "brief": None}
+    assert result["status"] == "done"
+
+
+def test_submit_brief_needs_the_key_answers_then_plans(monkeypatch):
+    import asyncio
+    meta = store.create()
+    missing = asyncio.run(vox_tools.run(meta["id"], "submit_brief", {"business_name": "Wild Trails Zoo", "what_it_does": "a zoo"}))
+    assert missing["status"] == "failed" and "target audience" in missing["message"]
+
+    planned = {}
+
+    async def fake_plan(pid, args):
+        planned["description"] = args["description"]
+        return {"status": "needs_approval", "message": "Plan. Shall I build it?"}
+
+    monkeypatch.setattr(vox_tools, "plan_site", fake_plan)
+    answers = {"business_name": "Wild Trails Zoo", "what_it_does": "a zoo", "target_audience": "families",
+               "goal": "buy tickets", "theme": "jungle adventure", "colours": "none"}
+    result = asyncio.run(vox_tools.run(meta["id"], "submit_brief", answers))
+    assert result["status"] == "needs_approval"
+    assert "- Target customers: families" in planned["description"] and "Colours" not in planned["description"]
+    assert store.load_meta(meta["id"])["interview"]["goal"] == "buy tickets"
