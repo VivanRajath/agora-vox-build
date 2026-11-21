@@ -140,7 +140,9 @@ cd frontend && npm run dev        # http://localhost:5173, proxies to :8000
 | `MURF_API_KEY` | Murf API key, passed to Agora's engine for Falcon TTS |
 | `MURF_VOICE_ID` / `MURF_LOCALE` | Voice and locale (default `Priya`, `en-IN`; Falcon voice ids are bare names) |
 | `MURF_MODEL` / `MURF_WS_URL` | Murf model (`FALCON`) and WebSocket endpoint (global by default) |
-| `ASR_LANGUAGE` | Speech recognition language (default `en-US`; `en-IN` also gets semantic end-of-turn detection) |
+| `ASR_LANGUAGE` | Speech recognition language (default `en-IN`) |
+| `END_OF_SPEECH` | `semantic` (default: the turn ends when the thought is finished) or `vad` (after 640 ms of silence) |
+| `INTERRUPT_MS` | How long you must speak to interrupt Vox (default 300 ms) |
 | `VOX_LLM_TIER` | Model tier for Vox's conversation (default `jnr`, the fast model) |
 | `PUBLIC_BASE_URL` | Public https URL of this backend; Agora calls `{PUBLIC_BASE_URL}/llm/...` (Render sets it automatically) |
 | `TOOL_SECRET` | Signs the per-session token Agora sends to `/llm` (bound to the project, expires after 4 hours) |

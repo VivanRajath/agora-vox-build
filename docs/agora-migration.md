@@ -84,3 +84,12 @@ the docs recommend for ConvoAI) and the browser user gets `build_token_with_uid`
 
 ### Phase 4
 - `Dockerfile`, `render.yaml`, README, ARCHITECTURE, AGENTS, `tests/`
+
+### Turn detection (join reference, properties.turn_detection.config, verified 2026-11-21)
+- `turn_detection.mode: "default"` with `config.start_of_speech` (`mode: "vad"`, `vad_config.interrupt_duration_ms`
+  and `speaking_interrupt_duration_ms`, default 160) and `config.end_of_speech.mode` (`vad`, `semantic` or `manual`).
+  The flat fields (`type`, `silence_duration_ms`, `threshold`...) are deprecated.
+- Semantic end of speech works only for `en-US`, `en-IN` and Chinese, with a single language; otherwise Agora falls back to VAD.
+  Its defaults are `silence_duration_ms` 320 and `max_wait_ms` 3000.
+- ARES supports `en-IN` (supported-languages page). It is the default because Indian English came through
+  fragmented with `en-US` plus a fixed 640 ms silence cut-off.

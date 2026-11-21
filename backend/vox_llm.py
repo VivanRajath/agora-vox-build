@@ -119,6 +119,7 @@ async def converse(project_id: str, messages: list[dict]):
     convo = _history(messages)
     user_text = next((m["content"] for m in reversed(convo) if m["role"] == "user"), "")
     if user_text:
+        log.info("heard [%s]: %r", project_id, user_text)
         events.publish(project_id, {"type": "transcript", "role": "user", "text": user_text})
 
     spoken: list[str] = []

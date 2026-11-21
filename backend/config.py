@@ -51,7 +51,12 @@ MURF_LOCALE = os.getenv("MURF_LOCALE", "en-IN")
 MURF_WS_URL = os.getenv("MURF_WS_URL", "wss://global.api.murf.ai/v1/speech/stream-input")
 MURF_MODEL = os.getenv("MURF_MODEL", "FALCON")
 
-ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "en-US")
+ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "en-IN")
+# End of the user's turn: "semantic" waits for a finished thought (en-US, en-IN and Chinese only;
+# other languages fall back to VAD), "vad" ends after a fixed silence.
+END_OF_SPEECH = os.getenv("END_OF_SPEECH", "semantic")
+# How long the user must speak before Vox stops talking. Higher ignores coughs, clicks and echo.
+INTERRUPT_MS = int(os.getenv("INTERRUPT_MS", "300"))
 
 # Model tier for Vox's conversational layer (the /llm endpoint Agora calls each turn).
 VOX_LLM_TIER = os.getenv("VOX_LLM_TIER", "jnr")

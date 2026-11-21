@@ -104,6 +104,17 @@ def join_body(project_id: str, channel: str, agent_uid: int, user_uid: int, agen
                 "params": {"model": "vox"},
             },
             "asr": {"vendor": "ares", "language": config.ASR_LANGUAGE},
+            # Field names from the join reference (turn_detection.config; the flat fields are deprecated).
+            "turn_detection": {
+                "mode": "default",
+                "config": {
+                    "start_of_speech": {
+                        "mode": "vad",
+                        "vad_config": {"interrupt_duration_ms": config.INTERRUPT_MS, "speaking_interrupt_duration_ms": config.INTERRUPT_MS},
+                    },
+                    "end_of_speech": {"mode": config.END_OF_SPEECH},
+                },
+            },
             "tts": {
                 "vendor": "murf",
                 "params": {
