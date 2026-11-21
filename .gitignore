@@ -32,6 +32,7 @@ data/
 # Frontend
 node_modules/
 frontend/dist/
+frontend/public/denoiser/
 
 # Site builder tools (scripts/setup_build_tools.sh)
 runtime/node_modules/

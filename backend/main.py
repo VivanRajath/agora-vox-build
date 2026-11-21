@@ -25,6 +25,8 @@ from . import auth, config, events, github, jobs, llm, store, users, voice, vox_
 from .editor import engine
 
 log = logging.getLogger("vox-build")
+# Windows may not know .wasm; the browser needs the right type to compile the noise-suppression module.
+mimetypes.add_type("application/wasm", ".wasm")
 # uvicorn only configures its own loggers; show ours too (tool calls, builds, publishing).
 if not log.handlers:
     _handler = logging.StreamHandler()

@@ -85,7 +85,7 @@ def _agora_error(r: httpx.Response) -> str:
 
 def join_body(project_id: str, channel: str, agent_uid: int, user_uid: int, agent_token: str, llm_token: str) -> dict:
     meta = store.load_meta(project_id)
-    return {
+    body = {
         "name": f"{channel}-agent",
         "properties": {
             "channel": channel,
@@ -104,7 +104,7 @@ def join_body(project_id: str, channel: str, agent_uid: int, user_uid: int, agen
                 "max_history": 20,
                 "params": {"model": "vox"},
             },
-            "asr": {"vendor": "ares", "language": config.ASR_LANGUAGE},
+            "asr": _asr(),
             "tts": {
                 "vendor": "murf",
                 "params": {
@@ -117,7 +117,29 @@ def join_body(project_id: str, channel: str, agent_uid: int, user_uid: int, agen
                 },
             },
         },
-    } | _turn_detection()
+    }
+    body["properties"].update(_turn_detection(), **_noise())
+    return body
+
+
+def _asr() -> dict:
+    """Speech recognition. Deepgram nova-3 under Agora's managed credentials (no Deepgram key, billed
+    to the Agora account) hears accents and names better than ARES; ARES is the fallback."""
+    if config.ASR_VENDOR == "deepgram":
+        return {
+            "credential_mode": "managed",
+            "vendor": "deepgram",
+            "params": {"url": "wss://api.deepgram.com/v1/listen", "model": config.ASR_MODEL, "language": config.ASR_LANGUAGE},
+        }
+    return {"vendor": "ares", "language": config.ASR_LANGUAGE}
+
+
+def _noise() -> dict:
+    """Selective Attention Locking (beta): the agent locks onto the person who speaks first, clearly,
+    and blocks most background voices and noise. No voiceprint needed in this mode."""
+    if not config.NOISE_LOCK:
+        return {}
+    return {"advanced_features": {"enable_sal": True}, "sal": {"sal_mode": "locking"}}
 
 
 def _turn_detection() -> dict:

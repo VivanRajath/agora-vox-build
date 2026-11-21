@@ -51,7 +51,14 @@ MURF_LOCALE = os.getenv("MURF_LOCALE", "en-IN")
 MURF_WS_URL = os.getenv("MURF_WS_URL", "wss://global.api.murf.ai/v1/speech/stream-input")
 MURF_MODEL = os.getenv("MURF_MODEL", "FALCON")
 
-ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "en-US")
+# Speech recognition. deepgram (nova-3, Agora-managed credentials, no Deepgram key needed) hears accents,
+# names and noisy rooms better than ares, Agora's own engine. Deepgram takes short codes like "en";
+# ARES takes BCP-47 tags like "en-US" / "en-IN".
+ASR_VENDOR = os.getenv("ASR_VENDOR", "deepgram").strip().lower()
+ASR_MODEL = os.getenv("ASR_MODEL", "nova-3")
+ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "") or ("en" if ASR_VENDOR == "deepgram" else "en-US")
+# Selective Attention Locking (beta): lock onto the speaker, block background voices and noise.
+NOISE_LOCK = os.getenv("NOISE_LOCK", "1") != "0"
 # Optional turn-detection tuning; empty keeps Agora's defaults (which is what reliably delivered turns).
 # END_OF_SPEECH: "semantic" waits for a finished thought (en-US/en-IN only), "vad" ends after a fixed silence.
 END_OF_SPEECH = os.getenv("END_OF_SPEECH", "")

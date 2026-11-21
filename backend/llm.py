@@ -1,4 +1,5 @@
 import json
+import logging
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -6,6 +7,8 @@ import anthropic
 import openai
 
 from . import config
+
+log = logging.getLogger("vox-build.llm")
 
 OPENAI_COMPATIBLE = {
     "openai": None,
@@ -275,6 +278,11 @@ async def _complete_openai(
                 continue
             if e.status_code == 413:
                 raise LLMError("This page is too large for the model's per-minute token limit. Try again in a minute or use a bigger model") from e
+            # Groq rejects a reply whose tool call isn't valid JSON ("Failed to parse tool call arguments",
+            # "failed_generation"); that's the model fumbling, so the next model gets a go.
+            if e.status_code == 400 and not last and ("tool call" in str(e).lower() or "failed_generation" in str(e).lower()):
+                log.info("%s fumbled a tool call, trying the next model", candidate)
+                continue
             raise LLMError(f"Model API error ({e.status_code}): {e.message}") from e
         except openai.APIConnectionError as e:
             raise LLMError("Could not reach the model API") from e

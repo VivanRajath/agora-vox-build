@@ -138,6 +138,9 @@ def approved_action(project_id: str, user_text: str) -> tuple[str, dict] | None:
     pending = meta.get("publish_approval") or {}
     if pending.get("repo") and time.time() - pending.get("ts", 0) < vox_tools.APPROVAL_TTL:
         return "publish_site", {"repo_name": pending["repo"].split("/")[-1], "confirmed": True}
+    oneshot = meta.get("oneshot_pending") or {}
+    if meta["current"] == 0 and oneshot.get("description") and time.time() - oneshot.get("ts", 0) < vox_tools.APPROVAL_TTL:
+        return "create_site", {"description": "", "heard": oneshot.get("heard", ""), "confirmed": True}
     if meta.get("draft") and (events.job(project_id) or {}).get("state") != "working":
         return "build_site", {}
     return None
@@ -161,6 +164,7 @@ async def converse(project_id: str, messages: list[dict]):
     action = approved_action(project_id, user_text) if user_text else None
     if action:
         name, args = action
+        vox_tools.turn_text.set(user_text)
         log.info("approval %r -> %s %s", user_text, name, args)
         filler = vox_tools.TOOLS[name].filler
         yield filler + " "

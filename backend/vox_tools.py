@@ -143,25 +143,43 @@ async def build_site(project_id: str, args: dict) -> dict:
 
 @tool(
     "create_site",
-    "One-shot mode: build a whole new website straight away from the user's single request. The researcher "
-    "works out the rest (palette, typography, sections, photos), so don't ask follow-up questions.",
-    {"description": {
-        "type": "string",
-        "description": "The user's request expanded into one rich English paragraph: what the site is for, the theme in "
-                       "detail (mood, colours, imagery, type feel), fitting sections, and every name, place or detail they gave.",
-    }},
-    ["description"],
-    filler="Love it. Building it now, the whole team is on it.",
+    "One-shot mode: build a whole new website from the user's single request. The researcher works out the rest "
+    "(palette, typography, sections, photos), so don't ask follow-up questions. Speech recognition makes mistakes, so "
+    "the first call only checks back what you heard; after the user says yes, call it again with confirmed: true.",
+    {
+        "description": {
+            "type": "string",
+            "description": "The user's request expanded into one rich English paragraph: what the site is for, the theme in "
+                           "detail (mood, colours, imagery, type feel), fitting sections, and every name, place or detail they gave.",
+        },
+        "heard": {"type": "string", "description": "What the user asked for, in under 15 plain words, to read back to them."},
+        "confirmed": {"type": "boolean", "description": "true only after the user said yes to the check-back."},
+    },
+    ["description", "heard"],
+    filler="Got it.",
 )
 async def create_site(project_id: str, args: dict) -> dict:
-    description = str(args.get("description", "")).strip()
-    if not description:
-        return {"status": "failed", "message": "Tell me what the website is for, in one sentence."}
-    if store.load_meta(project_id)["current"] > 0:
+    meta = store.load_meta(project_id)
+    if meta["current"] > 0:
         return {"status": "failed", "message": "This project already has a site. Tell me what to change, or start a new project."}
     if (events.job(project_id) or {}).get("state") == "working":
         return {"status": "in_progress", "message": "I'm already building it. It will appear on screen shortly."}
-    store.update(project_id, draft=None)
+    pending = meta.get("oneshot_pending") or {}
+    fresh = bool(pending.get("description")) and time.time() - pending.get("ts", 0) < APPROVAL_TTL
+    description = str(args.get("description") or "").strip() or (pending.get("description", "") if fresh else "")
+    if not description:
+        return {"status": "failed", "message": "Tell me what the website is for, in one sentence."}
+    # Spoken requests get misheard ("Aranj's doomsday" for "Avengers Doomsday"), so a voice request is read
+    # back first. Typed requests (no turn_text) build straight away.
+    spoken = bool(turn_text.get())
+    if spoken and not (args.get("confirmed") is True and fresh):
+        heard = str(args.get("heard") or "").strip() or description[:120]
+        store.update(project_id, oneshot_pending={"description": description, "heard": heard, "ts": time.time()})
+        events.publish(project_id, {"type": "plan", "spoken": f"I heard: {heard}"})
+        return {"status": "needs_approval", "message": f"Just to check, you want {heard}. Shall I build it?"}
+    if spoken:
+        description = pending["description"]
+    store.update(project_id, draft=None, oneshot_pending=None)
     return await jobs.answer_voice(project_id, engine.generate(project_id, description))
 
 
@@ -417,6 +435,8 @@ def typed_tool(project_id: str, text: str) -> tuple[str, dict]:
         return "undo_change", {}
     if words in PUBLISH_WORDS:
         return "publish_site", {"confirmed": False}
+    if meta.get("oneshot_pending") and meta["current"] == 0 and words in GO_AHEAD:
+        return "create_site", {"description": meta["oneshot_pending"]["description"], "heard": "", "confirmed": True}
     if meta.get("draft"):
         if words in GO_AHEAD:
             return "build_site", {}
@@ -428,6 +448,6 @@ def typed_tool(project_id: str, text: str) -> tuple[str, dict]:
     if meta["current"] == 0:
         # Typing is already "one request", so one-shot builds it; business plans it for approval.
         if mode(meta) == "oneshot":
-            return "create_site", {"description": text}
+            return "create_site", {"description": text, "heard": text}
         return "plan_site", {"description": text}
     return "edit_site", {"instruction": text}

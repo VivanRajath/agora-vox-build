@@ -140,7 +140,9 @@ cd frontend && npm run dev        # http://localhost:5173, proxies to :8000
 | `MURF_API_KEY` | Murf API key, passed to Agora's engine for Falcon TTS |
 | `MURF_VOICE_ID` / `MURF_LOCALE` | Voice and locale (default `Priya`, `en-IN`; Falcon voice ids are bare names) |
 | `MURF_MODEL` / `MURF_WS_URL` | Murf model (`FALCON`) and WebSocket endpoint (global by default) |
-| `ASR_LANGUAGE` | Speech recognition language (default `en-US`; `en-IN` is also supported) |
+| `ASR_VENDOR` | `deepgram` (default: nova-3 on Agora-managed credentials, no Deepgram key; best with accents, names and noise) or `ares` |
+| `ASR_LANGUAGE` | Empty: `en` for Deepgram, `en-US` for ARES (`en-IN` also works with ARES) |
+| `NOISE_LOCK` | `1` (default): Agora's Selective Attention Locking keeps the agent on the speaker and blocks background voices. The browser also runs Agora's AI noise suppression on the mic |
 | `END_OF_SPEECH` | Optional: `semantic` (the turn ends when the thought is finished) or `vad`. Empty keeps Agora's defaults |
 | `INTERRUPT_MS` | Optional: how long you must speak to interrupt Vox. Empty keeps Agora's 160 ms |
 | `VOX_LLM_TIER` | Model tier for Vox's conversation. Empty: `gpt-oss-20b` on Groq (reliable tool calls, its own quota), the `jnr` model elsewhere. `MODEL_VOX` picks an exact model |

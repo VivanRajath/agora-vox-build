@@ -26,6 +26,7 @@ export default function VoiceOrb({ voice, heard, thinking }) {
       <p className="orb-heard">
         {heard ? <>Heard: <q>{heard}</q></> : "Say something, and what Vox hears shows here."}
       </p>
+      {voice.denoised && <p className="orb-heard">Noise reduction on</p>}
       {voice.micSilent && !voice.muted && (
         <p className="notice is-error">
           Your microphone isn't picking up any sound{voice.micLabel ? ` (${voice.micLabel})` : ""}. Check it's the right

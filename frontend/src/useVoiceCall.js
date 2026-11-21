@@ -10,6 +10,34 @@ function loadAgora() {
   return sdk;
 }
 
+// Agora's AI noise suppression: cleans the mic (fans, traffic, background chatter) before it is sent,
+// so speech recognition hears the user. Desktop Chrome/Edge/Firefox; skipped where unsupported.
+let denoiser = null;
+function loadDenoiser(AgoraRTC) {
+  denoiser ??= import("agora-extension-ai-denoiser")
+    .then(({ AIDenoiserExtension }) => {
+      const ext = new AIDenoiserExtension({ assetsPath: "/denoiser" });
+      if (!ext.checkCompatibility()) return null;
+      AgoraRTC.registerExtensions([ext]);
+      return ext;
+    })
+    .catch(() => null);
+  return denoiser;
+}
+
+async function cleanMic(AgoraRTC, mic) {
+  const ext = await loadDenoiser(AgoraRTC);
+  if (!ext) return false;
+  try {
+    const processor = ext.createProcessor();
+    mic.pipe(processor).pipe(mic.processorDestination);
+    await processor.enable();
+    return true;
+  } catch {
+    return false; // the call still works, just without the extra cleaning
+  }
+}
+
 const MIC_ERRORS = new Set(["PERMISSION_DENIED", "NOT_READABLE", "DEVICE_NOT_FOUND"]);
 
 function friendly(e) {
@@ -35,6 +63,7 @@ export function useVoiceCall(projectId) {
   const [micLabel, setMicLabel] = useState("");
   const [micSilent, setMicSilent] = useState(false); // live for a while and the mic never picked anything up
   const [muted, setMuted] = useState(false);
+  const [denoised, setDenoised] = useState(false); // AI noise suppression is cleaning the mic
   const [error, setError] = useState(null);
 
   const teardown = useCallback(async (notify = true) => {
@@ -63,6 +92,8 @@ export function useVoiceCall(projectId) {
     try {
       // Mic first, so a blocked microphone doesn't start an agent we can't talk to.
       s.mic = await AgoraRTC.createMicrophoneAudioTrack({ AEC: true, ANS: true, AGC: true });
+      s.denoised = await cleanMic(AgoraRTC, s.mic);
+      setDenoised(s.denoised);
       const info = await post("/api/voice/start", { project_id: projectId });
       s.agentId = info.agent_id;
       if (session.current !== s) return; // stopped while connecting
@@ -135,7 +166,7 @@ export function useVoiceCall(projectId) {
   }, [projectId, teardown]);
 
   return {
-    state, volume, micLevel, micLabel, micSilent, muted, error, start, stop, toggleMute,
+    state, volume, micLevel, micLabel, micSilent, muted, denoised, error, start, stop, toggleMute,
     speaking: volume > 0.05,
     userSpeaking: !muted && micLevel > 0.06,
   };

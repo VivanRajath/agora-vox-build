@@ -49,6 +49,9 @@ def test_join_body_shape(monkeypatch):
     assert props["llm"]["url"] == f"https://example.test/llm/{meta['id']}/chat/completions"
     assert props["llm"]["api_key"] == "llm-token"
     assert props["tts"]["vendor"] == "murf"
+    assert props["asr"]["vendor"] in ("deepgram", "ares")
+    if props["asr"]["vendor"] == "deepgram":
+        assert props["asr"]["credential_mode"] == "managed" and props["asr"]["params"]["model"] == "nova-3"
     assert "turn_detection" not in props  # Agora's defaults unless END_OF_SPEECH / INTERRUPT_MS are set
     assert {"api_key", "voiceId", "locale", "model", "sample_rate", "base_url"} <= set(props["tts"]["params"])
 
@@ -222,7 +225,7 @@ def test_typed_request_follows_mode():
     meta = store.create()
     assert vox_tools.typed_tool(meta["id"], "a bakery site")[0] == "plan_site"
     store.update(meta["id"], mode="oneshot")
-    assert vox_tools.typed_tool(meta["id"], "a bakery site") == ("create_site", {"description": "a bakery site"})
+    assert vox_tools.typed_tool(meta["id"], "a bakery site") == ("create_site", {"description": "a bakery site", "heard": "a bakery site"})
 
 
 def test_create_site_generates_straight_away(monkeypatch):
@@ -355,3 +358,26 @@ def test_clicking_an_element_is_described_and_announced():
 def test_goodbyes_are_not_claimed_actions():
     assert not vox_llm.claims_action("Got it. If you need anything else, just let me know. Have a great day!")
     assert vox_llm.claims_action("Sure, swapping that photo now.")
+
+
+def test_spoken_one_shot_is_read_back_before_building(monkeypatch):
+    import asyncio
+    from backend.editor import engine
+    meta = store.create()
+    store.update(meta["id"], mode="oneshot")
+    built = []
+
+    async def fake_generate(pid, description, brief=None):
+        built.append(description)
+        return {"ok": True, "message": "Built it."}
+
+    monkeypatch.setattr(engine, "generate", fake_generate)
+    vox_tools.turn_text.set("build an avengers doomsday site")
+    first = asyncio.run(vox_tools.run(meta["id"], "create_site", {"description": "An Avengers Doomsday fan site...", "heard": "an Avengers Doomsday fan site", "confirmed": True}))
+    assert first["status"] == "needs_approval" and "Avengers Doomsday" in first["message"] and built == []
+    # "yes" goes through the server shortcut, which builds exactly what was read back
+    assert vox_llm.approved_action(meta["id"], "Yes, build it")[0] == "create_site"
+    name, args = vox_llm.approved_action(meta["id"], "yes")
+    asyncio.run(vox_tools.run(meta["id"], name, args))
+    assert built == ["An Avengers Doomsday fan site..."]
+    assert not store.load_meta(meta["id"]).get("oneshot_pending")

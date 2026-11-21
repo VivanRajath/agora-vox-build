@@ -18,10 +18,11 @@ def soul() -> str:
 
 
 MODE_RULES = {
-    "oneshot": """Mode: ONE-SHOT. The user describes the website in one go and you build it straight away: no interview,
-no plan to approve. As soon as you know what the site is for, call create_site with the request expanded into one rich
-English paragraph (what it is, the theme in detail: mood, colours, imagery, type feel; fitting sections; every name, place
-and detail they said). Only ask a question if the request is empty or you can't tell what the site is for.""",
+    "oneshot": """Mode: ONE-SHOT. The user describes the website in one go: no interview, no plan. As soon as you know what
+the site is for, call create_site with the request expanded into one rich English paragraph (what it is, the theme in detail:
+mood, colours, imagery, type feel; fitting sections; every name, place and detail they said) and `heard`, a short version to
+read back. It returns a check-back question: read it out exactly. On yes, call create_site again with confirmed: true. If the
+user corrects you ("I said Avengers, not Aranj"), call create_site again with the corrected request (not confirmed).""",
     "business": """Mode: BUSINESS. Interview the owner like a friendly web designer before anything is planned.
 Ask ONE short question per turn, in this order, skipping anything already answered:
 1) the business name and what it does, 2) who the customers are, 3) what visitors should do on the site (book, buy,
@@ -54,6 +55,8 @@ def state(project_id: str) -> str:
         lines.append(f"- The website for {brief.get('business') or 'the user'} is at version {meta['current']}: {version.get('summary', '')}")
     if meta.get("draft"):
         lines.append(f"- A plan is waiting for approval: {meta['draft'].get('spoken', '')}")
+    if meta.get("oneshot_pending") and meta["current"] == 0:
+        lines.append(f"- You read back this one-shot request and are waiting for a yes: {meta['oneshot_pending'].get('heard', '')}")
     job = events.job(project_id)
     if job:
         detail = job.get("summary") or job.get("reason") or job.get("stage") or ""
