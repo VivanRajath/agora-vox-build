@@ -19,7 +19,7 @@ import time
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
-from . import auth, config, events, jobs, prompts_vox, store
+from . import auth, config, events, jobs, languages, prompts_vox, store
 from .agora_token.RtcTokenBuilder2 import Role_Publisher, RtcTokenBuilder
 
 log = logging.getLogger("vox-build.voice")
@@ -217,7 +217,8 @@ def _on_event(project_id: str, event: dict) -> None:
 
 async def speak(agent_id: str, text: str, priority: str = "APPEND") -> None:
     from .vox_llm import speakable  # vox_llm imports this module
-    text = speakable(text)
+    project_id = _agents.get(agent_id, "")
+    text = speakable(await languages.translate(text, languages.current(project_id)))
     data = text.encode("utf-8")[:500].decode("utf-8", "ignore")  # Agora's limit is 512 bytes
     url = f"{config.AGORA_API_BASE}/projects/{config.AGORA_APP_ID}/agents/{agent_id}/speak"
     try:

@@ -46,17 +46,21 @@ AGORA_API_BASE = os.getenv("AGORA_API_BASE", "https://api.agora.io/api/conversat
 
 # Murf Falcon TTS, called by Agora's engine. Falcon voice ids are bare names.
 MURF_API_KEY = os.getenv("MURF_API_KEY", "")
-MURF_VOICE_ID = os.getenv("MURF_VOICE_ID", "Priya")
+# Pooja: Indian English that also speaks Kannada, Hindi, Tamil and Telugu (Priya only does English and Hindi).
+MURF_VOICE_ID = os.getenv("MURF_VOICE_ID", "en-IN-pooja")
 MURF_LOCALE = os.getenv("MURF_LOCALE", "en-IN")
 MURF_WS_URL = os.getenv("MURF_WS_URL", "wss://global.api.murf.ai/v1/speech/stream-input")
 MURF_MODEL = os.getenv("MURF_MODEL", "FALCON")
 
-# Speech recognition. deepgram (nova-3, Agora-managed credentials, no Deepgram key needed) hears accents,
-# names and noisy rooms better than ares, Agora's own engine. Deepgram takes short codes like "en";
-# ARES takes BCP-47 tags like "en-US" / "en-IN".
-ASR_VENDOR = os.getenv("ASR_VENDOR", "deepgram").strip().lower()
+# Speech recognition. ares (Agora's own) is the default because it can listen for several languages
+# at once (tested: English, Kannada and Hindi, word for word). deepgram (nova-3 on Agora-managed
+# credentials, no Deepgram key) is an English-only option. ARES takes BCP-47 tags like "en-IN";
+# Deepgram short codes like "en".
+ASR_VENDOR = os.getenv("ASR_VENDOR", "ares").strip().lower()
 ASR_MODEL = os.getenv("ASR_MODEL", "nova-3")
-ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "") or ("en" if ASR_VENDOR == "deepgram" else "en-US")
+# ARES listens for several languages at once and writes each in its own script, so the user can just
+# talk: English, Kannada or Hindi (add ta-IN, te-IN, ml-IN... as needed). Deepgram is English-only here.
+ASR_LANGUAGE = os.getenv("ASR_LANGUAGE", "") or ("en" if ASR_VENDOR == "deepgram" else "en-IN,kn-IN,hi-IN")
 # Selective Attention Locking (beta): lock onto the speaker, block background voices and noise.
 NOISE_LOCK = os.getenv("NOISE_LOCK", "1") != "0"
 # Optional turn-detection tuning; empty keeps Agora's defaults (which is what reliably delivered turns).

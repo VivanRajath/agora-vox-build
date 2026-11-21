@@ -381,3 +381,11 @@ def test_spoken_one_shot_is_read_back_before_building(monkeypatch):
     asyncio.run(vox_tools.run(meta["id"], name, args))
     assert built == ["An Avengers Doomsday fan site..."]
     assert not store.load_meta(meta["id"]).get("oneshot_pending")
+
+
+def test_brief_placeholders_are_not_answers():
+    import asyncio
+    meta = store.create()
+    r = asyncio.run(vox_tools.run(meta["id"], "submit_brief", {"business_name": "Delhi Chaat", "what_it_does": "sells chaat",
+                                                                "target_audience": "?", "goal": "?", "theme": "unknown"}))
+    assert r["status"] == "failed" and "target audience" in r["message"]

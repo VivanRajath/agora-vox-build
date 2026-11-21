@@ -138,10 +138,10 @@ cd frontend && npm run dev        # http://localhost:5173, proxies to :8000
 | `AGORA_APP_ID` / `AGORA_APP_CERTIFICATE` | Agora project. Signs RTC tokens for the browser and the agent |
 | `AGORA_CUSTOMER_ID` / `AGORA_CUSTOMER_SECRET` | Agora RESTful API credentials (Basic auth) to start and stop agents |
 | `MURF_API_KEY` | Murf API key, passed to Agora's engine for Falcon TTS |
-| `MURF_VOICE_ID` / `MURF_LOCALE` | Voice and locale (default `Priya`, `en-IN`; Falcon voice ids are bare names) |
+| `MURF_VOICE_ID` / `MURF_LOCALE` | Voice and locale (default `en-IN-pooja`, `en-IN`). Pooja also speaks Kannada, Hindi, Tamil and Telugu, so Vox can reply in the user's language |
 | `MURF_MODEL` / `MURF_WS_URL` | Murf model (`FALCON`) and WebSocket endpoint (global by default) |
-| `ASR_VENDOR` | `deepgram` (default: nova-3 on Agora-managed credentials, no Deepgram key; best with accents, names and noise) or `ares` |
-| `ASR_LANGUAGE` | Empty: `en` for Deepgram, `en-US` for ARES (`en-IN` also works with ARES) |
+| `ASR_VENDOR` | `ares` (default: listens for several languages at once) or `deepgram` (nova-3 on Agora-managed credentials, English only) |
+| `ASR_LANGUAGE` | Empty: `en-IN,kn-IN,hi-IN` for ARES, so you can just talk in English, Kannada or Hindi and Vox replies in the same language (add `ta-IN`, `te-IN`...); `en` for Deepgram |
 | `NOISE_LOCK` | `1` (default): Agora's Selective Attention Locking keeps the agent on the speaker and blocks background voices. The browser also runs Agora's AI noise suppression on the mic |
 | `END_OF_SPEECH` | Optional: `semantic` (the turn ends when the thought is finished) or `vad`. Empty keeps Agora's defaults |
 | `INTERRUPT_MS` | Optional: how long you must speak to interrupt Vox. Empty keeps Agora's 160 ms |

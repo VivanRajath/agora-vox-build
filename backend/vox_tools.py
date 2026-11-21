@@ -217,11 +217,15 @@ def brief_report(fields: dict) -> str:
     "plan; read the plan out and ask whether to build it or change anything.",
     {k: {"type": "string", "description": v} for k, v in BRIEF_FIELDS.items()},
     BRIEF_REQUIRED,
-    filler="Thanks, that's everything I need. Putting your brief together.",
+    filler="",
 )
 async def submit_brief(project_id: str, args: dict) -> dict:
     fields = {k: str(args.get(k) or "").strip() for k in BRIEF_FIELDS}
-    fields = {k: v for k, v in fields.items() if v and v.lower() not in ("none", "n/a", "unknown", "not given")}
+    # Placeholders the model fills in before the user has answered ("?", "unknown", "-") don't count.
+    fields = {
+        k: v for k, v in fields.items()
+        if v.strip("?-. ").strip() and v.strip("?-. ").lower() not in ("none", "n/a", "na", "unknown", "not given", "not specified", "tbd")
+    }
     missing = [k.replace("_", " ") for k in BRIEF_REQUIRED if not fields.get(k)]
     if missing:
         return {"status": "failed", "message": f"I still need: {', '.join(missing)}. Ask the user about that next."}

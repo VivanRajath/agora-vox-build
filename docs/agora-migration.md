@@ -40,7 +40,7 @@ Sources: Agora `llms.txt` index and the pages below. Where two docs disagree, bo
 - Conflicts: Agora's page uses `"model": "FALCON"`, while Murf's streaming docs use `"falcon-2.1"`. `MURF_MODEL` is
   configurable, with `FALCON` as the default per Agora.
 - Falcon voice IDs are bare names. The English (India) Falcon voices include Priya, Aarav, Anisha, Nikhil and Pooja.
-  The default is `Priya` with locale `en-IN`.
+  The default was `Priya` with locale `en-IN`; it is now `en-IN-pooja` (see Languages below).
 - Tested against Murf directly (2026-11-21): the stream-input WebSocket returns identical audio for `Priya` and
   `en-IN-priya`, and for `FALCON` and `falcon-2.1`. Murf's `GET /v1/speech/voices?model=falcon-2.1` lists
   `en-IN-*` IDs (117 voices). The connection was routed to the `ap-south-1` region, with a concurrency limit of 3.
@@ -93,3 +93,12 @@ the docs recommend for ConvoAI) and the browser user gets `build_token_with_uid`
   Its defaults are `silence_duration_ms` 320 and `max_wait_ms` 3000.
 - ARES supports `en-IN` (supported-languages page). It is the default because Indian English came through
   fragmented with `en-US` plus a fixed 640 ms silence cut-off.
+
+### Languages (verified 2026-11-21)
+- ARES takes several BCP-47 tags in one string (`"en-IN,kn-IN,hi-IN"`); Kannada, Hindi, Tamil, Telugu, Malayalam and
+  Marathi are on Agora's supported-languages list. Semantic end of speech needs a single language, so it falls back to VAD.
+- Test: Murf clips played into a real call with that setting came back word for word in Kannada (native Kannada voice,
+  and Samar/Pooja set to `en-IN`), Hindi and English. So Murf's multilingual voices read Kannada text correctly even with
+  locale `en-IN`; the locale doesn't need switching (and Agora's `update` endpoint can't change TTS settings anyway).
+- `en-IN-priya` only supports en-IN and hi-IN, so the default voice is `en-IN-pooja` (en-IN, hi-IN, kn-IN, ta-IN, te-IN...).
+- Sarvam ASR needs a Sarvam key (managed mode isn't documented), so it isn't used.

@@ -19,7 +19,7 @@ services:
       - key: MURF_API_KEY
         sync: false
       - key: MURF_VOICE_ID
-        value: Priya
+        value: en-IN-pooja
       - key: MURF_LOCALE
         value: en-IN
       - key: ASR_LANGUAGE

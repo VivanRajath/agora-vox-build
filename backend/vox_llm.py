@@ -17,7 +17,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from . import events, jobs, llm, prompts_vox, store, vox_tools
+from . import events, jobs, languages, llm, prompts_vox, store, vox_tools
 from .voice import verify_llm_token
 
 log = logging.getLogger("vox-build.llm")
@@ -159,6 +159,9 @@ async def converse(project_id: str, messages: list[dict]):
     if user_text:
         log.info("heard [%s]: %r", project_id, user_text)
         events.publish(project_id, {"type": "transcript", "role": "user", "text": user_text})
+    # The user may speak Kannada, Hindi... (ARES listens for several languages); Vox answers in kind.
+    lang = languages.detect(user_text)
+    languages.remember(project_id, lang)
 
     spoken: list[str] = []
     action = approved_action(project_id, user_text) if user_text else None
@@ -167,9 +170,12 @@ async def converse(project_id: str, messages: list[dict]):
         vox_tools.turn_text.set(user_text)
         log.info("approval %r -> %s %s", user_text, name, args)
         filler = vox_tools.TOOLS[name].filler
-        yield filler + " "
+        if lang == "en" and filler:
+            yield filler + " "
         result = await vox_tools.run(project_id, name, args)
         reply = speakable(str(result.get("message", "")))
+        if lang != "en":
+            filler, reply = "", speakable(await languages.translate(reply, lang))
         if reply:
             yield reply
         events.publish(project_id, {"type": "transcript", "role": "assistant", "text": f"{filler} {reply}".strip()})
@@ -181,7 +187,8 @@ async def converse(project_id: str, messages: list[dict]):
     done: dict[str, dict] = {}  # the same call twice in one turn runs once (no double photo swaps)
     try:
         for _ in range(MAX_ROUNDS):
-            reply = await llm.chat(prompts_vox.system(project_id), convo, "vox", tools=tools, max_tokens=REPLY_TOKENS)
+            system = prompts_vox.system(project_id) + languages.reply_rule(lang)
+            reply = await llm.chat(system, convo, "vox", tools=tools, max_tokens=REPLY_TOKENS)
             text = speakable(reply.text)
             if text:
                 spoken.append(text)
@@ -195,9 +202,9 @@ async def converse(project_id: str, messages: list[dict]):
                     convo.append({"role": "user", "content": NUDGE})
                     continue
                 break
-            if not text:
+            if not text and lang == "en":
                 filler = vox_tools.TOOLS.get(reply.tool_calls[0].name)
-                if filler and not spoken:
+                if filler and filler.filler and not spoken:
                     spoken.append(filler.filler)
                     yield filler.filler + " "
             convo.append({
@@ -221,13 +228,13 @@ async def converse(project_id: str, messages: list[dict]):
                     result = done[key] = await vox_tools.run(project_id, call.name, call.arguments)
                 convo.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
                 if result.get("status") in SPEAK_VERBATIM and result.get("message"):
-                    verbatim = speakable(result["message"])
+                    verbatim = speakable(await languages.translate(result["message"], lang))
             if verbatim:
                 spoken.append(verbatim)
                 yield verbatim
                 break
         else:
-            closing = "I've started on that. It will show up on screen shortly."
+            closing = speakable(await languages.translate("I've started on that. It will show up on screen shortly.", lang))
             spoken.append(closing)
             yield closing
     except llm.LLMError as e:
@@ -236,6 +243,7 @@ async def converse(project_id: str, messages: list[dict]):
         spoken.append(sorry)
         yield sorry
     if spoken:
+        log.info("said [%s]: %r", project_id, " ".join(spoken)[:200])
         events.publish(project_id, {"type": "transcript", "role": "assistant", "text": " ".join(spoken)})
 
 
