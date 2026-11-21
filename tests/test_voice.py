@@ -49,7 +49,7 @@ def test_join_body_shape(monkeypatch):
     assert props["llm"]["url"] == f"https://example.test/llm/{meta['id']}/chat/completions"
     assert props["llm"]["api_key"] == "llm-token"
     assert props["tts"]["vendor"] == "murf"
-    assert props["turn_detection"]["config"]["end_of_speech"]["mode"] in ("semantic", "vad")
+    assert "turn_detection" not in props  # Agora's defaults unless END_OF_SPEECH / INTERRUPT_MS are set
     assert {"api_key", "voiceId", "locale", "model", "sample_rate", "base_url"} <= set(props["tts"]["params"])
 
 

@@ -23,7 +23,7 @@ services:
       - key: MURF_LOCALE
         value: en-IN
       - key: ASR_LANGUAGE
-        value: en-IN
+        value: en-US
       - key: VOX_LLM_TIER
         value: jnr
       - key: TOOL_SECRET

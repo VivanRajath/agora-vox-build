@@ -8,6 +8,7 @@ The agent listens (Agora ASR), thinks through our /llm endpoint (vox_llm.py) and
 speaks with Murf Falcon. Agora authenticates to /llm with a per-session token
 signed here with TOOL_SECRET.
 """
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -104,17 +105,6 @@ def join_body(project_id: str, channel: str, agent_uid: int, user_uid: int, agen
                 "params": {"model": "vox"},
             },
             "asr": {"vendor": "ares", "language": config.ASR_LANGUAGE},
-            # Field names from the join reference (turn_detection.config; the flat fields are deprecated).
-            "turn_detection": {
-                "mode": "default",
-                "config": {
-                    "start_of_speech": {
-                        "mode": "vad",
-                        "vad_config": {"interrupt_duration_ms": config.INTERRUPT_MS, "speaking_interrupt_duration_ms": config.INTERRUPT_MS},
-                    },
-                    "end_of_speech": {"mode": config.END_OF_SPEECH},
-                },
-            },
             "tts": {
                 "vendor": "murf",
                 "params": {
@@ -127,7 +117,43 @@ def join_body(project_id: str, channel: str, agent_uid: int, user_uid: int, agen
                 },
             },
         },
-    }
+    } | _turn_detection()
+
+
+def _turn_detection() -> dict:
+    """Only when configured: with these set, calls went silent, so Agora's defaults are the default.
+    Field names from the join reference (turn_detection.config; the flat fields are deprecated)."""
+    cfg = {}
+    if config.INTERRUPT_MS:
+        cfg["start_of_speech"] = {"mode": "vad", "vad_config": {"interrupt_duration_ms": config.INTERRUPT_MS, "speaking_interrupt_duration_ms": config.INTERRUPT_MS}}
+    if config.END_OF_SPEECH:
+        cfg["end_of_speech"] = {"mode": config.END_OF_SPEECH}
+    return {"turn_detection": {"mode": "default", "config": cfg}} if cfg else {}
+
+
+async def _watch(agent_id: str, project_id: str) -> None:
+    """Logs what Agora's agent has heard during a call, so a silent call can be told apart from
+    a mic problem (nothing heard) or an ASR problem (heard, but no turn reached /llm)."""
+    url = f"{config.AGORA_API_BASE}/projects/{config.AGORA_APP_ID}/agents/{agent_id}"
+    seen = -1
+    for _ in range(24):  # up to 6 minutes
+        await asyncio.sleep(15)
+        if agent_id not in _agents:
+            return
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                status = (await client.get(url, headers=_auth_header())).json().get("status")
+                r = await client.get(url + "/history", headers=_auth_header())
+        except httpx.HTTPError as e:
+            log.info("agent %s: watch failed: %s", agent_id, e)
+            continue
+        contents = (r.json() if r.status_code == 200 else {}).get("contents") or []
+        if len(contents) != seen:
+            seen = len(contents)
+            last_user = next((c.get("content") for c in reversed(contents) if c.get("role") == "user"), None)
+            log.info("agent %s [%s] status=%s history=%d last_user=%r", agent_id, project_id, status, seen, last_user)
+        if status in ("STOPPED", "FAILED"):
+            return
 
 
 async def _leave(agent_id: str) -> None:
@@ -178,7 +204,8 @@ async def start(request: Request):
         raise HTTPException(502, _agora_error(r))
     agent_id = r.json().get("agent_id", "")
     _agents[agent_id] = project_id
-    log.info("voice agent %s started for %s in %s", agent_id, project_id, channel)
+    log.info("voice agent %s started for %s in %s (asr %s)", agent_id, project_id, channel, config.ASR_LANGUAGE)
+    asyncio.create_task(_watch(agent_id, project_id))
     return {"app_id": app_id, "channel": channel, "uid": user_uid, "token": user_token, "agent_id": agent_id, "agent_uid": agent_uid}
 
 

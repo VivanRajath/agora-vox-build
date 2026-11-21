@@ -32,6 +32,45 @@ DASH_RE = re.compile(r"\s*(?:—|&mdash;|&#8212;)\s*|–|&ndash;|&#8211;")
 
 # Patches are small; whole projects need room. Reasoning models spend part of the budget thinking.
 PATCH_MAX_TOKENS = 6000
+
+# Groq's on-demand tier rejects any single request over 8k tokens (prompt plus the output budget),
+# per key. A whole site is ~9k, so on Groq the review and repair passes see only the files they
+# need, within this budget (about 4 characters a token), and write shorter replies.
+FOCUS_CHARS = 12000
+FOCUS_MAX_TOKENS = 2500
+
+
+def _tight() -> bool:
+    return config.LLM_PROVIDER == "groq"
+
+
+def _focus(files: dict[str, str], wanted: list[str], budget: int = FOCUS_CHARS) -> dict[str, str]:
+    """Files in priority order until the budget is spent; the first one always goes in."""
+    out, used = {}, 0
+    for path in dict.fromkeys(wanted):
+        text = files.get(path)
+        if text is None or (out and used + len(text) > budget):
+            continue
+        out[path] = text
+        used += len(text)
+    return out
+
+
+def _review_files(files: dict[str, str]) -> dict[str, str]:
+    """What the critic sees: the theme and layout first, then the top sections in page order."""
+    if not _tight():
+        return _llm_files(files)
+    order = re.findall(r"<([A-Z][A-Za-z0-9]*)", files.get("src/App.jsx", ""))
+    sections = [f"src/components/{name}.jsx" for name in order]
+    return _focus(files, ["src/index.css", "src/App.jsx", *sections])
+
+
+def _repair_files(files: dict[str, str], error: str) -> dict[str, str]:
+    """What the repair pass sees: the files the build error names, then App.jsx and the data file."""
+    if not _tight():
+        return _llm_files(files)
+    named = [p for p in re.findall(r"src/[\w./-]+\.(?:jsx|js|css)", error or "") if site_template.LLM_FILE_RE.match(p)]
+    return _focus(files, [*named, "src/App.jsx", "src/data/site.js", "src/index.css"])
 FULL_MAX_TOKENS = 20000
 
 # Words that point at a component even when its name isn't said.
@@ -246,7 +285,8 @@ async def _commit(project_id: str, files: dict[str, str], deleted: list[str], su
 async def _repair(project_id: str, current: dict, files: dict, error: str, summary: str, description: str) -> dict:
     """One snr patch pass over a new project that doesn't build."""
     events.publish(project_id, {"type": "job_escalated", "tier": "repair", "reason": _short_error(error)})
-    raw = await llm.complete(prompts.repair_system(), prompts.repair_user(_llm_files(files), error[:3000]), "snr", PATCH_MAX_TOKENS)
+    budget = FOCUS_MAX_TOKENS if _tight() else PATCH_MAX_TOKENS
+    raw = await llm.complete(prompts.repair_system(), prompts.repair_user(_repair_files(files, error), error[:1500]), "snr", budget)
     fixed, deleted = patches.apply(files, patches.parse_patch(raw))
     return await _commit(project_id, fixed, _deleted(current, fixed), summary, description, "architect")
 
@@ -351,7 +391,8 @@ async def _review(project_id: str, files: dict[str, str], brief: dict) -> dict[s
         return files
     events.publish(project_id, {"type": "job_stage", "tier": "critic"})
     try:
-        raw = await llm.complete(prompts.critic_system(), prompts.critic_user(_llm_files(files), _brief_reminder(brief)), "critic", PATCH_MAX_TOKENS)
+        budget = FOCUS_MAX_TOKENS if _tight() else PATCH_MAX_TOKENS
+        raw = await llm.complete(prompts.critic_system(), prompts.critic_user(_review_files(files), _brief_reminder(brief)), "critic", budget)
         ops = patches.parse_patch(raw)
     except (llm.LLMError, EditFailed) as e:
         events.publish(project_id, {"type": "agent_note", "agent": "critic", "summary": "Design critic signed off with no changes"})
