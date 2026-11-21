@@ -7,7 +7,7 @@ import html as html_lib
 import re
 from functools import lru_cache
 
-from . import events, store, users, vox_tools
+from . import events, steering, store, users, vox_tools
 from .config import ROOT_DIR
 
 
@@ -140,4 +140,4 @@ def selection_speech(selection: dict | None) -> str:
 
 
 def system(project_id: str) -> str:
-    return f"{soul()}\n\n{state(project_id)}"
+    return f"{soul()}\n\n{state(project_id)}\n\n{steering.for_vox(store.load_meta(project_id))}"

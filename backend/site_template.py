@@ -144,7 +144,9 @@ def head(title: str, fonts_url: str) -> str:
         f"    <title>{html.escape(title or 'My website')}</title>\n"
         '    <link rel="preconnect" href="https://fonts.googleapis.com" />\n'
         '    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />\n'
-        f'    <link rel="stylesheet" href="{html.escape(fonts_url)}" />'
+        f'    <link rel="stylesheet" href="{html.escape(fonts_url)}" />\n'
+        # Phones: one too-wide element (a carousel, a big headline) must not make the whole page scroll sideways.
+        '    <style>html, body { overflow-x: clip; } img, video { max-width: 100%; }</style>'
     )
 
 

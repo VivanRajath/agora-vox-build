@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, events, github, jobs, llm, store, users, voice, vox_llm, vox_tools
+from . import auth, config, events, github, jobs, llm, steering, store, users, voice, vox_llm, vox_tools
 from .editor import engine, images
 
 log = logging.getLogger("vox-build")
@@ -146,6 +146,24 @@ async def page_layout(project_id: str, request: Request):
     items = (await request.json()).get("images") or []
     images.remember_layout(project_id, items if isinstance(items, list) else [])
     return {"ok": True}
+
+
+@app.get("/api/projects/{project_id}/steering")
+async def get_steering(project_id: str):
+    return steering.get(_require_project(project_id))
+
+
+@app.post("/api/projects/{project_id}/steering")
+async def set_steering(project_id: str, request: Request):
+    """The Steer panel: standing rules for every agent, and how Vox behaves."""
+    _require_project(project_id)
+    return steering.save(project_id, await request.json())
+
+
+@app.post("/api/projects/{project_id}/stop")
+async def stop_job(project_id: str):
+    _require_project(project_id)
+    return {"stopped": jobs.stop(project_id)}
 
 
 @app.post("/api/projects/{project_id}/mode")

@@ -17,7 +17,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-from .. import builder, config, events, llm, site_template, store
+from .. import builder, config, events, llm, site_template, steering, store
 from . import copywriter, fontknight, images, patches, prompts, research
 from .patches import EditFailed
 from .router import ESCALATION, route
@@ -120,7 +120,7 @@ async def plan(project_id: str, description: str) -> dict:
     async with _locks[project_id]:
         events.publish(project_id, {"type": "job_started", "kind": "plan", "instruction": description, "tier": "research"})
         try:
-            brief = await research.brief(description)
+            brief = await research.brief(_with_rules(project_id, description))
         except llm.LLMError as e:
             return _fail(project_id, description, str(e))
         if not brief:
@@ -197,7 +197,7 @@ async def edit(project_id: str, instruction: str) -> dict:
         events.publish(project_id, {"type": "job_started", "kind": "edit", "instruction": instruction, "tier": tier})
         files = store.read_files(project_id)
         meta = store.load_meta(project_id)
-        notes = [_brief_reminder(meta.get("brief"))]
+        notes = [steering.for_builders(meta), _brief_reminder(meta.get("brief"))]
         if research.wants_images(instruction):
             events.publish(project_id, {"type": "job_stage", "tier": "research"})
             needs = await research.image_needs(instruction, meta.get("brief"))
@@ -471,7 +471,7 @@ async def _plan_site(project_id: str, description: str, brief: dict | None = Non
     """Researcher (unless the brief was approved already), then the rest of the team in parallel.
     Returns (notes for the architect, brief)."""
     if brief is None:
-        brief = await research.brief(description)
+        brief = await research.brief(_with_rules(project_id, description))
     events.publish(project_id, {"type": "job_stage", "tier": "team"})
     images, typography, copy = await asyncio.gather(
         research.find_images(project_id, brief.get("images", [])),
@@ -484,7 +484,7 @@ async def _plan_site(project_id: str, description: str, brief: dict | None = Non
     events.publish(project_id, {"type": "agent_note", "agent": "fontknight", "summary": fontknight.summary(typography), "fonts": typography})
     if copy:
         events.publish(project_id, {"type": "agent_note", "agent": "copywriter", "summary": copywriter.summary(copy)})
-    notes = [research.notes_for_prompt(brief if brief.get("sections") else None, images), fontknight.notes_for_prompt(typography)]
+    notes = [steering.for_builders(store.load_meta(project_id)), research.notes_for_prompt(brief if brief.get("sections") else None, images), fontknight.notes_for_prompt(typography)]
     if copy:
         notes.append(copywriter.notes_for_prompt(copy))
     return "\n\n".join(n for n in notes if n), brief
@@ -502,7 +502,7 @@ async def _review(project_id: str, files: dict[str, str], brief: dict) -> dict[s
     events.publish(project_id, {"type": "job_stage", "tier": "critic"})
     try:
         budget = FOCUS_MAX_TOKENS if _tight() else PATCH_MAX_TOKENS
-        raw = await llm.complete(prompts.critic_system(), prompts.critic_user(_review_files(files), _brief_reminder(brief)), "critic", budget)
+        raw = await llm.complete(prompts.critic_system(), prompts.critic_user(_review_files(files), "\n\n".join(n for n in (steering.for_builders(store.load_meta(project_id)), _brief_reminder(brief)) if n)), "critic", budget)
         ops = patches.parse_patch(raw)
     except (llm.LLMError, EditFailed) as e:
         events.publish(project_id, {"type": "agent_note", "agent": "critic", "summary": "Design critic signed off with no changes"})
@@ -554,6 +554,11 @@ def _brief_card(brief: dict) -> dict:
         "sections": [s.get("id") for s in brief.get("sections", []) if isinstance(s, dict)],
         "palette": brief.get("palette"),
     }
+
+
+def _with_rules(project_id: str, description: str) -> str:
+    rules = steering.for_builders(store.load_meta(project_id))
+    return f"{description}\n\n{rules}" if rules else description
 
 
 def _brief_reminder(brief: dict | None) -> str:

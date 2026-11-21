@@ -8,6 +8,7 @@ chat.completion.chunk SSE events ending in data: [DONE].
 Text the model says before a tool call is streamed straight away, so the user
 hears "Sure, planning that now" while the tool runs instead of silence.
 """
+import asyncio
 import json
 import logging
 import re
@@ -171,6 +172,59 @@ def approved_action(project_id: str, user_text: str) -> tuple[str, dict] | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# One reply per turn
+# ---------------------------------------------------------------------------
+# Agora sends a new turn each time the user pauses, so one sentence can arrive as "Colors.", then
+# "Colors. CTA colours are okay.", then "... whole site dark". Answering every piece made Vox talk
+# over itself and act on half-sentences. Each turn gets a number; only the newest turn of a project
+# may speak or start a change, and a turn that sounds unfinished waits a moment for the rest.
+
+_turns: dict[str, int] = {}
+SETTLE_SECONDS = 1.2
+UNFINISHED_RE = re.compile(
+    r"(\u2026|\.\.\.|[-\u2013\u2014,:]|\b(and|so|uh|um|the|to|for|with|but|or|because|like|a|an|in|of|my|is|it's|that)\b)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _newest(project_id: str, turn: int) -> bool:
+    return _turns.get(project_id) == turn
+
+
+def _unfinished(text: str) -> bool:
+    words = text.split()
+    return bool(UNFINISHED_RE.search(text.strip())) or (len(words) <= 1 and not is_approval(text))
+
+
+def _repeats(text: str, spoken: list[str]) -> bool:
+    """True when text mostly says again what this turn already said."""
+    new = set(re.findall(r"\w+", text.lower()))
+    if not new:
+        return True
+    for old in spoken:
+        before = set(re.findall(r"\w+", old.lower()))
+        if before and len(new & before) / len(new) > 0.6:
+            return True
+    return False
+
+
+FAKE_TURN_RE = re.compile(r"\s*\b(User|Assistant|Vox|Customer|Me)\s*:.*$", re.DOTALL)
+
+
+def one_reply(text: str) -> str:
+    """What Vox says in one go: never a made-up turn for the user ("...?User: They are Gen Z..."), and at
+    most one question, so the user isn't asked three things at once."""
+    text = FAKE_TURN_RE.sub("", text).strip()
+    first = text.find("?")
+    if first != -1 and text.find("?", first + 1) != -1:
+        text = text[: first + 1]
+    return text
+
+
+ACK_WORDS = 10  # text the model says before a tool call: spoken at once only if it's a short acknowledgement
+
+
 async def converse(project_id: str, messages: list[dict]):
     """Yields spoken text pieces for one user turn, running tools in between."""
     llm.use_settings(jobs.owner_settings(project_id))
@@ -181,15 +235,20 @@ async def converse(project_id: str, messages: list[dict]):
         # the last real message again made Vox repeat itself, so an empty turn gets no reply.
         log.info("empty turn [%s], not answering", project_id)
         return
-    if user_text:
-        log.info("heard [%s]: %r", project_id, user_text)
-        events.publish(project_id, {"type": "transcript", "role": "user", "text": user_text})
+    turn = _turns[project_id] = _turns.get(project_id, 0) + 1
+    log.info("heard [%s]: %r", project_id, user_text)
+    if _unfinished(user_text):
+        await asyncio.sleep(SETTLE_SECONDS)
+    if not _newest(project_id, turn):
+        log.info("superseded [%s]: %r", project_id, user_text[:80])
+        return
+    events.publish(project_id, {"type": "transcript", "role": "user", "text": user_text})
     # The user may speak Kannada, Hindi... (ARES listens for several languages); Vox answers in kind.
     lang = languages.detect(user_text)
     languages.remember(project_id, lang)
 
     spoken: list[str] = []
-    action = approved_action(project_id, user_text) if user_text else None
+    action = approved_action(project_id, user_text)
     if action:
         name, args = action
         vox_tools.turn_text.set(user_text)
@@ -214,10 +273,10 @@ async def converse(project_id: str, messages: list[dict]):
         for _ in range(MAX_ROUNDS):
             system = prompts_vox.system(project_id) + languages.reply_rule(lang)
             reply = await llm.chat(system, convo, "vox", tools=tools, max_tokens=REPLY_TOKENS)
-            text = speakable(reply.text)
-            if text:
-                spoken.append(text)
-                yield text + " "
+            if not _newest(project_id, turn):
+                log.info("superseded [%s] while thinking", project_id)
+                return
+            text = one_reply(speakable(reply.text))
             if not reply.tool_calls:
                 if not nudged and claims_action(text):
                     # "Swapping it now" with no tool call means nothing happens; give the model one more go.
@@ -226,10 +285,18 @@ async def converse(project_id: str, messages: list[dict]):
                     convo.append({"role": "assistant", "content": reply.text})
                     convo.append({"role": "user", "content": NUDGE})
                     continue
+                if text and not _repeats(text, spoken):
+                    spoken.append(text)
+                    yield text + " "
                 break
-            if not text and lang == "en":
+            # Before a tool runs: a short acknowledgement covers the wait; a longer text is held back,
+            # because the answer after the tool replaces it (otherwise the user hears two replies).
+            if text and len(text.split()) <= ACK_WORDS and not spoken:
+                spoken.append(text)
+                yield text + " "
+            elif not text and lang == "en" and not spoken:
                 filler = vox_tools.TOOLS.get(reply.tool_calls[0].name)
-                if filler and filler.filler and not spoken:
+                if filler and filler.filler:
                     spoken.append(filler.filler)
                     yield filler.filler + " "
             convo.append({
@@ -248,6 +315,9 @@ async def converse(project_id: str, messages: list[dict]):
                 elif call.name in JOB_TOOLS and any(k.split(":", 1)[0] in JOB_TOOLS for k in done):
                     # One change per turn: a second job would undo or redo the first.
                     result = {"status": "in_progress", "message": "Already working on the change from this turn. Wait for the user."}
+                elif call.name in JOB_TOOLS and not _newest(project_id, turn):
+                    log.info("superseded [%s] before %s", project_id, call.name)
+                    return
                 else:
                     log.info("tool call %s %s", call.name, call.arguments)
                     result = done[key] = await vox_tools.run(project_id, call.name, call.arguments)

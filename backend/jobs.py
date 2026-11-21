@@ -21,15 +21,37 @@ def owner_settings(project_id: str) -> dict | None:
     return users.ai_settings(users.get(store.load_meta(project_id).get("owner")))
 
 
+# The job running for each project, so the user can stop it ("stop", the Stop button).
+current: dict[str, asyncio.Task] = {}
+
+
 def run(project_id: str, coro) -> asyncio.Task:
     """Runs an edit job with the project owner's AI settings."""
     settings = owner_settings(project_id)
 
     async def with_settings():
         llm.use_settings(settings)
-        return await coro
+        try:
+            return await coro
+        except asyncio.CancelledError:
+            from . import events
+            events.publish(project_id, {"type": "job_failed", "instruction": "", "reason": "Stopped, as you asked."})
+            announce.discard(project_id)
+            return {"ok": False, "message": "Stopped."}
 
-    return spawn(with_settings())
+    task = spawn(with_settings())
+    current[project_id] = task
+    task.add_done_callback(lambda t: current.pop(project_id, None) if current.get(project_id) is t else None)
+    return task
+
+
+def stop(project_id: str) -> bool:
+    """Cancels the project's running job. True if there was one."""
+    task = current.get(project_id)
+    if task and not task.done():
+        task.cancel()
+        return True
+    return False
 
 
 async def answer_voice(project_id: str, coro) -> dict:

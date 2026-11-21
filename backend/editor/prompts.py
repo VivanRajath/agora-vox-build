@@ -40,7 +40,7 @@ DESIGN_PRINCIPLES = """Design principles (every page must meet all of them):
 - Copy: concrete and specific (dish names with prices in the local currency, real-sounding hours and addresses in the right city, named team members). Never "Welcome to", "Elevate", "Unleash", "Discover the magic" or filler superlatives.
 - Motion: subtle and purposeful (transition-colors, a 2px hover lift, smooth scrolling with scroll-mt on anchored sections, at most a gentle framer-motion fade or rise on scroll with viewport={{ once: true }}). Respect prefers-reduced-motion: motion-safe: classes, and useReducedMotion() with framer-motion.
 - Accessibility: semantic landmarks, alt text, labelled form fields, visible focus rings, tap targets at least 44px, no text over photos without a dark overlay.
-- Mobile first: it must read well at 375px wide with no horizontal scroll."""
+- Mobile first: it must read well at 360px wide with no horizontal scroll. Headlines use responsive sizes (text-4xl sm:text-5xl lg:text-7xl), grids collapse to one column on phones, the nav becomes a menu button, tap targets are at least 44px, and nothing has a fixed width wider than the screen."""
 
 PATCH_PROTOCOL = """Output format (strict, nothing else):
 SUMMARY: <one short past-tense sentence describing the change, friendly enough to be spoken aloud>

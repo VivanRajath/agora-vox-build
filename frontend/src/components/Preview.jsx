@@ -8,7 +8,7 @@ const DEVICES = {
   mobile: { width: "390px", label: "Mobile", Icon: PhoneIcon },
 };
 
-export default function Preview({ projectId, version, latest, reloadKey, busy, tierLabel, picking, selection, onSelect }) {
+export default function Preview({ projectId, version, latest, reloadKey, busy, tierLabel, picking, selection, onSelect, onStop }) {
   const frameRef = useRef(null);
   const scrollY = useRef(0);
   const [device, setDevice] = useState("desktop");
@@ -80,6 +80,7 @@ export default function Preview({ projectId, version, latest, reloadKey, busy, t
               <span className="frame-status-text">
                 <strong>{tierLabel[busy.tier] || "Vox"}</strong> is working on "{busy.instruction}"
               </span>
+              {onStop && <button className="btn small stop-btn" onClick={onStop}>Stop</button>}
             </div>
           )}
           {picking && !busy && (

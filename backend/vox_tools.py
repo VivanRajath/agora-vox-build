@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import auth, events, github, jobs, publish, store, users
+from . import auth, events, github, jobs, publish, steering, store, users
 from .editor import engine
 
 log = logging.getLogger("vox-build.tools")
@@ -190,7 +190,8 @@ async def create_site(project_id: str, args: dict) -> dict:
     # Spoken requests get misheard ("Aranj's doomsday" for "Avengers Doomsday"), so a voice request is read
     # back first. Typed requests (no turn_text) build straight away.
     spoken = bool(turn_text.get())
-    if spoken and not (args.get("confirmed") is True and fresh):
+    ask_first = steering.get(meta)["ask_first"]
+    if spoken and ask_first and not (args.get("confirmed") is True and fresh):
         heard = str(args.get("heard") or "").strip() or description[:120]
         store.update(project_id, oneshot_pending={"description": description, "heard": heard, "ts": time.time()})
         events.publish(project_id, {"type": "plan", "spoken": f"I heard: {heard}"})
@@ -199,7 +200,7 @@ async def create_site(project_id: str, args: dict) -> dict:
             "message": f"Just to check, you want {heard}. Shall I build it?",
             "note": "When the user agrees, in any language, call create_site with confirmed: true. Don't ask again.",
         }
-    if spoken:
+    if spoken and ask_first:
         description = pending["description"]
     store.update(project_id, draft=None, oneshot_pending=None)
     return await jobs.answer_voice(project_id, engine.generate(project_id, description))
@@ -253,7 +254,11 @@ async def submit_brief(project_id: str, args: dict) -> dict:
         return {"status": "failed", "message": f"I still need: {', '.join(missing)}. Ask the user about that next."}
     store.update(project_id, interview=fields)
     events.publish(project_id, {"type": "report", "fields": fields})
-    return await plan_site(project_id, {"description": brief_report(fields)})
+    planned = await plan_site(project_id, {"description": brief_report(fields)})
+    if planned["status"] == "needs_approval" and not steering.get(store.load_meta(project_id))["ask_first"]:
+        # The user turned "ask before building" off: plan, then build straight away.
+        return await build_site(project_id, {})
+    return planned
 
 
 @tool(
@@ -315,6 +320,54 @@ async def change_image(project_id: str, args: dict) -> dict:
         return {"status": "failed", "message": "There's no site yet. Let's build it first."}
     request = said or str(args.get("request") or "")
     return await jobs.answer_voice(project_id, engine.change_image(project_id, target, str(args.get("new_subject") or "").strip(), request))
+
+
+@tool(
+    "steer",
+    "ONLY for a standing instruction that should hold for the rest of the session: 'from now on...', 'always...', "
+    "'never...', 'stop asking me', 'forget the dark theme rule'. Not for one-off requests or questions (a name idea, "
+    "one change): answer or use the other tools for those. Saves or removes the rule; every agent follows it.",
+    {
+        "action": {"type": "string", "enum": ["add_rule", "remove_rule", "ask_first_on", "ask_first_off", "suggestions_on",
+                                               "suggestions_off", "short_replies", "detailed_replies"]},
+        "rule": {"type": "string", "description": "For add_rule / remove_rule: the rule in short English ('Always use a dark theme')."},
+    },
+    ["action"],
+    filler="Noted.",
+)
+async def steer(project_id: str, args: dict) -> dict:
+    action, rule = str(args.get("action") or ""), str(args.get("rule") or "").strip()
+    meta = store.load_meta(project_id)
+    s = steering.get(meta)
+    if action == "add_rule":
+        if not rule:
+            return {"status": "failed", "message": "What should the rule be?"}
+        steering.add_rule(project_id, rule)
+        return {"status": "done", "message": f"Got it. From now on: {rule}. Every agent will follow that."}
+    if action == "remove_rule":
+        _, removed = steering.remove_rule(project_id, rule)
+        return {"status": "done" if removed else "failed", "message": "Removed that rule." if removed else "I couldn't find that rule."}
+    switches = {
+        "ask_first_on": ("ask_first", True, "I'll check with you before building."),
+        "ask_first_off": ("ask_first", False, "Okay, I'll just do it without asking first. Publishing still needs your yes."),
+        "suggestions_on": ("suggestions", True, "I'll offer ideas when they help."),
+        "suggestions_off": ("suggestions", False, "Okay, no suggestions. I'll do exactly what you say."),
+        "short_replies": ("short", True, "Short replies from now on."),
+        "detailed_replies": ("short", False, "I'll give a bit more detail."),
+    }
+    if action not in switches:
+        return {"status": "failed", "message": "I didn't understand that instruction."}
+    key, value, message = switches[action]
+    s[key] = value
+    steering.save(project_id, s)
+    return {"status": "done", "message": message}
+
+
+@tool("stop_work", "Stop the build or change that is running right now ('stop', 'cancel that', 'wait, don't').", filler="Stopping.")
+async def stop_work(project_id: str, args: dict) -> dict:
+    if jobs.stop(project_id):
+        return {"status": "done", "message": "Stopped. Nothing was changed. What would you like instead?"}
+    return {"status": "done", "message": "Nothing is running right now."}
 
 
 @tool("undo_change", "Undo the last change to the website.", filler="Undoing that.")

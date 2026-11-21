@@ -131,6 +131,28 @@ cd frontend && npm run dev        # http://localhost:5173, proxies to :8000
 .venv/Scripts/python -m pytest    # tests (build tests need scripts/setup_build_tools.sh)
 ```
 
+## Demo on a phone
+
+The app is mobile-first: on a phone, Vox's voice panel stays at the top while you scroll, the live preview sits under
+it, and the generated sites are built to read well at 360px with no sideways scrolling. The microphone needs HTTPS.
+
+**Easiest:** the backend serves the app itself, so open the backend's HTTPS URL on the phone:
+- Render: deploy with `render.yaml` and open `https://<your-service>.onrender.com`.
+- Your laptop: run the server and `cloudflared tunnel --url http://localhost:8000` (or ngrok), set `PUBLIC_BASE_URL` to
+  that URL, restart, and open it on the phone.
+
+**Frontend on Vercel:** Vercel can host the React app but not the backend (long builds, project files on disk, live
+event streams and Agora's calls need a long-running server). Run the backend on Render or behind a tunnel as above,
+then in `frontend/vercel.json` replace `YOUR-BACKEND-HOST` with its host name and import the `frontend/` folder as a
+Vercel project. Agora still calls the backend directly (`PUBLIC_BASE_URL`).
+
+## Steering the agents
+
+You direct; the agents follow. The **Steer** tab (or saying "from now on...") sets standing rules that go to Vox, the
+researcher, the developers and the design critic and outrank their own taste ("always use a dark theme", "never use
+photos of people"), plus three switches: ask before building, offer suggestions, short replies. Say "stop" (or tap
+**Stop**) to cancel a running build or change.
+
 ## Configuration
 
 | Variable | Purpose |

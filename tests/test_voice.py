@@ -239,6 +239,7 @@ def test_create_site_generates_straight_away(monkeypatch):
         return {"ok": True, "message": "Built it."}
 
     monkeypatch.setattr(engine, "generate", fake_generate)
+    vox_tools.turn_text.set("")  # a typed request (other tests may have left spoken text behind)
     result = asyncio.run(vox_tools.run(meta["id"], "create_site", {"description": "a comic-book themed movie theatre"}))
     assert seen == {"description": "a comic-book themed movie theatre", "brief": None}
     assert result["status"] == "done"
@@ -453,3 +454,9 @@ def test_revising_a_plan_keeps_it_and_only_updates_photos(monkeypatch):
     assert draft["brief"]["palette"] == brief["palette"] and draft["brief"]["sections"] == brief["sections"]
     assert [i["query"] for i in draft["brief"]["images"]] == ["indian naan paratha bread", "baker"]
     assert "use photos of Indian breads" in engine.described(draft)
+
+
+def test_one_reply_drops_fake_user_turns_and_extra_questions():
+    assert vox_llm.one_reply("Switching. Who are your customers?User: Gen Z.What should visitors do?") == "Switching. Who are your customers?"
+    assert vox_llm.one_reply("Great, TrendPulse it is. User: yes") == "Great, TrendPulse it is."
+    assert vox_llm.one_reply("Done. The heading is bigger now.") == "Done. The heading is bigger now."

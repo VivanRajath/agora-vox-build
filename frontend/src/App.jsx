@@ -5,6 +5,7 @@ import Preview from "./components/Preview.jsx";
 import VoicePanel from "./components/VoicePanel.jsx";
 import ActivityLog from "./components/ActivityLog.jsx";
 import History from "./components/History.jsx";
+import SteerPanel from "./components/SteerPanel.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import GitHubModal from "./components/GitHubModal.jsx";
@@ -231,6 +232,9 @@ export default function App() {
         case "report":
           addLog({ kind: "report", who: "Business brief", text: "What Vox learned in the interview, sent to the planning team:", fields: ev.fields });
           break;
+        case "steering":
+          setMeta((m) => ({ ...m, steering: ev.steering }));
+          break;
         case "mode":
           setMeta((m) => ({ ...m, mode: ev.mode }));
           addLog({ kind: "info", text: ev.mode === "oneshot" ? "Switched to one-shot mode" : "Switched to business mode" });
@@ -335,7 +339,8 @@ export default function App() {
             disabled={isBlank}
             onClick={() => api.publish(projectId, { confirmed: false }).catch((e) => addLog({ kind: "error", text: e.message }))}
           >
-            <span>{meta.published?.url ? "Republish" : "Put it online"}</span>
+            <span className="label-long">{meta.published?.url ? "Republish" : "Put it online"}</span>
+            <span className="label-short">Publish</span>
           </button>
           <button className="btn quiet" onClick={() => setDialog("settings")} title="API keys, models and photos">
             <SettingsIcon /> <span className="hide-sm">Settings</span>
@@ -371,6 +376,7 @@ export default function App() {
           latest={latest}
           reloadKey={reloadKey}
           busy={busy}
+          onStop={() => api.stop(projectId).catch(() => {})}
           tierLabel={TIER_LABEL}
           picking={picking}
           selection={selection}
@@ -400,7 +406,7 @@ export default function App() {
           <LiveCard publish={meta.publish} published={meta.published} current={meta.current} />
 
           <div className="tabs" role="tablist" aria-label="Sidebar">
-            {[["activity", "Activity"], ["versions", `Versions (${meta.versions.length})`]].map(([id, label]) => (
+            {[["activity", "Activity"], ["steer", "Steer"], ["versions", `Versions (${meta.versions.length})`]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "is-on" : ""} onClick={() => setTab(id)}>
                 {label}
               </button>
@@ -409,6 +415,14 @@ export default function App() {
           <div className="tab-panel" role="tabpanel">
             {tab === "activity" ? (
               <ActivityLog mode={meta.mode || "business"} entries={log} tierLabel={TIER_LABEL} isBlank={isBlank} onAction={runAction} />
+            ) : tab === "steer" ? (
+              <SteerPanel
+                steering={meta.steering}
+                onChange={(steering) => {
+                  setMeta((m) => ({ ...m, steering }));
+                  api.steering(projectId, steering).catch((e) => addLog({ kind: "error", text: e.message }));
+                }}
+              />
             ) : (
               <History
                 versions={meta.versions}
