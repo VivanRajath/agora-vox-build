@@ -218,7 +218,7 @@ export default function App() {
           break;
         case "published":
           setGithubNeeded(false);
-          setMeta((m) => ({ ...m, published: { url: ev.url, repo: ev.repo, version: ev.version }, publish: { state: "live" } }));
+          setMeta((m) => ({ ...m, published: { url: ev.url, repo: ev.repo, version: ev.version }, publish: { state: "live" }, ...(ev.local ? { local_site: { url: ev.url, version: ev.version } } : {}) }));
           addLog({ kind: "done", who: "Live", text: `Your site is live at ${ev.url}` });
           break;
         case "version":
@@ -280,6 +280,21 @@ export default function App() {
     api.select(projectId, null).catch(() => {});
   };
 
+  // Publishes the current version at /<website-name>/ on this server and opens it. The tab opens
+  // first, inside the click, so the browser doesn't block it as a pop-up.
+  const putOnline = async () => {
+    const tab = window.open("about:blank", "_blank");
+    try {
+      const site = await api.publishLocal(projectId);
+      setMeta((m) => ({ ...m, local_site: site }));
+      if (tab) tab.location.href = site.url;
+      else window.open(site.url, "_blank");
+    } catch (e) {
+      tab?.close();
+      addLog({ kind: "error", text: e.message });
+    }
+  };
+
   const sendCommand = async (text) => {
     try {
       await api.command(projectId, text);
@@ -337,9 +352,9 @@ export default function App() {
           <button
             className="btn primary"
             disabled={isBlank}
-            onClick={() => api.publish(projectId, { confirmed: false }).catch((e) => addLog({ kind: "error", text: e.message }))}
+            onClick={putOnline}
           >
-            <span className="label-long">{meta.published?.url ? "Republish" : "Put it online"}</span>
+            <span className="label-long">{meta.local_site?.url ? "Republish" : "Put it online"}</span>
             <span className="label-short">Publish</span>
           </button>
           <button className="btn quiet" onClick={() => setDialog("settings")} title="API keys, models and photos">
@@ -403,7 +418,7 @@ export default function App() {
             isBlank={isBlank}
           />
 
-          <LiveCard publish={meta.publish} published={meta.published} current={meta.current} />
+          <LiveCard publish={meta.publish} published={meta.local_site || meta.published} current={meta.current} />
 
           <div className="tabs" role="tablist" aria-label="Sidebar">
             {[["activity", "Activity"], ["steer", "Steer"], ["versions", `Versions (${meta.versions.length})`]].map(([id, label]) => (

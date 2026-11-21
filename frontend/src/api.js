@@ -26,6 +26,7 @@ export const api = {
   steering: (id, body) => request(`/api/projects/${id}/steering`, { method: "POST", body: JSON.stringify(body) }),
   stop: (id) => request(`/api/projects/${id}/stop`, { method: "POST" }),
   setMode: (id, mode) => request(`/api/projects/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
+  publishLocal: (id) => request(`/api/projects/${id}/publish-local`, { method: "POST" }),
   publish: (id, body) => request(`/api/projects/${id}/publish`, { method: "POST", body: JSON.stringify(body) }),
   downloadUrl: (id) => url(`/api/projects/${id}/download`),
   pushGithub: (id, repo, isPrivate) =>

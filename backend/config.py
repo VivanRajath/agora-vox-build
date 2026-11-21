@@ -11,6 +11,8 @@ load_dotenv(ROOT_DIR / ".env")
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data" / "projects"))
 USERS_DIR = Path(os.getenv("USERS_DIR", DATA_DIR.parent / "users"))
 FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
+# Where 'Put it online' sites are reachable (http://localhost:8000/<website-name>/).
+LOCAL_SITE_BASE = os.getenv("LOCAL_SITE_BASE", "http://localhost:8000").rstrip("/")
 
 
 def _session_secret() -> str:

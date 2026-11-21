@@ -38,9 +38,10 @@ def call(pid, **args):
     return asyncio.run(vox_tools.publish_site(pid, args))
 
 
-def test_publish_needs_github(project, monkeypatch):
+def test_without_github_it_asks_then_publishes_locally(project, monkeypatch):
     monkeypatch.setattr(vox_tools, "_owner_token", lambda pid: "")
-    assert call(project, confirmed=True)["status"] == "needs_github"
+    result = call(project, confirmed=True)  # a yes before being asked isn't enough
+    assert result["status"] == "needs_approval" and "localhost" in result["message"]
 
 
 def test_confirmed_without_asking_first_is_not_enough(project, gh):
@@ -140,3 +141,32 @@ def test_typed_flow_plans_then_builds(project):
     # A change is added to the waiting plan, not re-planned from scratch.
     assert vox_tools.typed_tool(pid, "add a cakes section") == ("revise_plan", {"change": "add a cakes section"})
     assert vox_tools.typed_tool(pid, "publish")[0] == "publish_site"
+
+
+def test_put_it_online_serves_the_site_at_its_name(project, monkeypatch):
+    import asyncio
+    from fastapi.testclient import TestClient
+    from backend import local_site, vox_tools
+    from backend.main import app
+    from backend.editor import engine
+    pid = store.create()["id"]
+    built = asyncio.run(engine.ensure_preview(pid, 0))
+    store.update(pid, current=1, brief={"business": "Aurora Branding"})
+
+    async def ready(project_id, n):
+        return built
+
+    monkeypatch.setattr(engine, "ensure_preview", ready)
+    monkeypatch.setattr(vox_tools, "_owner_token", lambda pid: "")
+    meta = store.load_meta(pid)
+    site = local_site.publish(app, pid, built, "http://localhost:8000")
+    assert site["slug"].startswith("aurora-branding") and site["url"] == f"http://localhost:8000/{site['slug']}/"
+    c = TestClient(app)
+    assert c.get(f"/{site['slug']}/").status_code == 200
+    assert c.get(f"/{site['slug']}", follow_redirects=False).headers["location"] == f"/{site['slug']}/"
+    assert c.get("/api/config").status_code == 200  # the app's own paths still work
+    # Voice: without GitHub, "put it online" asks first, then publishes to the same address.
+    first = asyncio.run(vox_tools.run(pid, "publish_site", {"confirmed": False}))
+    assert first["status"] == "needs_approval" and site["url"] in first["message"]
+    done = asyncio.run(vox_tools.run(pid, "publish_site", {"confirmed": True, "repo_name": site["slug"]}))
+    assert done["status"] == "done" and site["url"] in done["message"]

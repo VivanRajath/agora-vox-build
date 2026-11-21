@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, config, events, github, jobs, llm, steering, store, users, voice, vox_llm, vox_tools
+from . import auth, config, events, github, jobs, llm, local_site, steering, store, users, voice, vox_llm, vox_tools
 from .editor import engine, images
 
 log = logging.getLogger("vox-build")
@@ -409,5 +409,18 @@ async def preview(project_id: str, path: str = ""):
     return FileResponse(target, media_type=media_type, headers=NO_STORE)
 
 
+@app.post("/api/projects/{project_id}/publish-local")
+async def publish_local(project_id: str, request: Request):
+    """The 'Put it online' button: the current version at /<website-name>/ on this server."""
+    meta = _require_project(project_id)
+    if meta["current"] == 0:
+        raise HTTPException(400, "There's nothing to put online yet. Build the site first.")
+    built = await engine.ensure_preview(project_id, meta["current"])
+    if built is None:
+        raise HTTPException(503, "This version couldn't be built")
+    return local_site.publish(app, project_id, built, str(request.base_url))
+
+
 if config.FRONTEND_DIST.is_dir():
     app.mount("/", StaticFiles(directory=config.FRONTEND_DIST, html=True), name="frontend")
+local_site.mount_all(app)  # sites published earlier, ahead of the frontend mount

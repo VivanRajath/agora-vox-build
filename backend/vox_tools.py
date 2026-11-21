@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import auth, events, github, jobs, publish, steering, store, users
+from . import auth, events, github, jobs, local_site, publish, steering, store, users
 from .editor import engine
 
 log = logging.getLogger("vox-build.tools")
@@ -438,9 +438,8 @@ async def publish_site(project_id: str, args: dict) -> dict:
         return {"status": "failed", "message": "There's nothing to publish yet. Let's build the site first."}
     token = _owner_token(project_id)
     if not token:
-        events.publish(project_id, {"type": "needs_github"})
-        how = "Please connect GitHub using the button on screen" if auth.enabled().get("github") else "GitHub sign-in isn't set up on this server"
-        return {"status": "needs_github", "message": f"{how}, then ask me again. Or download the ZIP from the top bar."}
+        # No GitHub: put it online on this server at /<website-name>/, after the user's yes.
+        return await _publish_local(project_id, args)
     if (meta.get("publish") or {}).get("state") in ("pushing", "deploying", "checking"):
         return {"status": "in_progress", "message": "It's already being published. Ask me for the publication status."}
 
@@ -480,6 +479,24 @@ async def publish_site(project_id: str, args: dict) -> dict:
     events.publish(project_id, {"type": "approval", "action": "publish", "state": "approved", "repo": full})
     jobs.run(project_id, publish.run(project_id, token, owner, name))
     return {"status": "in_progress", "message": f"Publishing now. GitHub usually takes under a minute; I'll tell you when {url} is live."}
+
+
+async def _publish_local(project_id: str, args: dict) -> dict:
+    slug = local_site.slug_for(project_id)
+    url = f"{local_site.BASE_URL}/{slug}/"
+    approval = store.load_meta(project_id).get("publish_approval") or {}
+    approved = args.get("confirmed") is True and approval.get("repo") == f"local/{slug}" and time.time() - approval.get("ts", 0) < APPROVAL_TTL
+    if not approved:
+        store.update(project_id, publish_approval={"repo": f"local/{slug}", "ts": time.time()})
+        summary = f"I'll put the current version online at {url}."
+        events.publish(project_id, {"type": "approval", "action": "publish", "state": "needs_approval", "repo": f"local/{slug}", "url": url, "message": summary})
+        return {"status": "needs_approval", "message": summary + " Shall I go ahead?", "repo_name": slug}
+    store.update(project_id, publish_approval=None)
+    built = await engine.ensure_preview(project_id, store.load_meta(project_id)["current"])
+    if built is None:
+        return {"status": "failed", "message": "This version couldn't be built, so I can't put it online."}
+    site = local_site.publish(None, project_id, built)
+    return {"status": "done", "message": f"It's online at {site['url']}. The link is on screen."}
 
 
 @tool("publication_status", "Whether the site is live yet after publish_site, and its address.", filler="Checking.")
