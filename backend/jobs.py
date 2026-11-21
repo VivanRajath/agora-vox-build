@@ -5,6 +5,9 @@ from . import config, llm, store, users
 
 _background: set[asyncio.Task] = set()
 
+# Projects whose job outlived the voice turn ("working on it"): Vox announces the result when it lands.
+announce: set[str] = set()
+
 
 def spawn(coro) -> asyncio.Task:
     task = asyncio.create_task(coro)
@@ -36,5 +39,6 @@ async def answer_voice(project_id: str, coro) -> dict:
     try:
         result = await asyncio.wait_for(asyncio.shield(task), config.TOOL_SYNC_WAIT)
     except asyncio.TimeoutError:
+        announce.add(project_id)
         return {"status": "in_progress", "message": "Working on it. It will show up on screen in a few seconds."}
     return {"status": "done" if result["ok"] else "failed", "message": result["message"]}

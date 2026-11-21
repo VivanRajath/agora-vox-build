@@ -260,3 +260,33 @@ def test_submit_brief_needs_the_key_answers_then_plans(monkeypatch):
     assert result["status"] == "needs_approval"
     assert "- Target customers: families" in planned["description"] and "Colours" not in planned["description"]
     assert store.load_meta(meta["id"])["interview"]["goal"] == "buy tickets"
+
+
+def test_empty_turn_is_not_answered_again(monkeypatch):
+    meta = store.create()
+
+    async def no_model(*a, **k):
+        raise AssertionError("an empty turn must not re-answer the previous request")
+
+    monkeypatch.setattr(llm, "chat", no_model)
+    r = client.post(
+        f"/llm/{meta['id']}/chat/completions",
+        headers={"Authorization": f"Bearer {voice.make_llm_token(meta['id'])}"},
+        json={"stream": True, "messages": [
+            {"role": "user", "content": "build a zoo site"}, {"role": "assistant", "content": "Building it."},
+            {"role": "user", "content": ""},
+        ]},
+    )
+    assert r.status_code == 200
+    assert "".join(c["choices"][0]["delta"].get("content", "") for c in _events(r.text)) == ""
+
+
+def test_background_results_are_announced_once():
+    from backend import jobs
+    meta = store.create()
+    pid = meta["id"]
+    assert voice._announcement(pid, {"type": "job_done", "version": {"summary": "Built it."}}) is None  # turn already said it
+    jobs.announce.add(pid)
+    text = voice._announcement(pid, {"type": "job_done", "version": {"summary": "Built the zoo site."}})
+    assert "Built the zoo site." in text and pid not in jobs.announce
+    assert "live at" in voice._announcement(pid, {"type": "published", "url": "https://ana.github.io/zoo/"})

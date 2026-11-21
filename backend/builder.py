@@ -143,7 +143,11 @@ async def build(files: dict[str, str], work_dir: Path, public_dir: Path | None, 
         result = await asyncio.to_thread(_build_sync, stage, public_dir, title, fonts_url)
     except subprocess.TimeoutExpired:
         result = BuildResult(False, "the build timed out", stage=stage)
-    log.info("build %s in %d ms", "ok" if result.ok else "failed", result.ms)
+    if result.ok:
+        log.info("build ok in %d ms", result.ms)
+    else:
+        first = next((l.strip() for l in (result.errors or "").splitlines() if l.strip() and "[ERROR]" in l), (result.errors or "").strip()[:200])
+        log.info("build failed in %d ms: %s", result.ms, first[:240])
     result.stage = stage
     return result
 

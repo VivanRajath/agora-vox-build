@@ -77,6 +77,14 @@ def _history(messages: list[dict]) -> list[dict]:
     return convo[-MAX_HISTORY:]
 
 
+def _new_user_text(messages: list[dict]) -> str:
+    """The user's words this turn: the newest user/assistant message, if it's the user's and not empty."""
+    for m in reversed(messages or []):
+        if m.get("role") in ("user", "assistant"):
+            return llm.content_text(m.get("content")).strip() if m.get("role") == "user" else ""
+    return ""
+
+
 # A plain "yes" to the question Vox just asked. Anything with a change in it goes to the model.
 YES_RE = re.compile(
     r"^(yes|yeah|yep|yup|ya|sure|ok|okay|alright|all right|go ahead|go for it|do it|build it|publish it|"
@@ -117,7 +125,12 @@ async def converse(project_id: str, messages: list[dict]):
     """Yields spoken text pieces for one user turn, running tools in between."""
     llm.use_settings(jobs.owner_settings(project_id))
     convo = _history(messages)
-    user_text = next((m["content"] for m in reversed(convo) if m["role"] == "user"), "")
+    user_text = _new_user_text(messages)
+    if not user_text:
+        # Agora sometimes sends a turn whose newest user message is empty (noise, a click). Answering
+        # the last real message again made Vox repeat itself, so an empty turn gets no reply.
+        log.info("empty turn [%s], not answering", project_id)
+        return
     if user_text:
         log.info("heard [%s]: %r", project_id, user_text)
         events.publish(project_id, {"type": "transcript", "role": "user", "text": user_text})

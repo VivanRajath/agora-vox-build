@@ -460,6 +460,7 @@ def _done(project_id: str, version: dict) -> dict:
 
 def _fail(project_id: str, instruction: str, reason: str) -> dict:
     reason = _short_error(reason) or reason
+    log.warning("job failed for %s: %s", project_id, reason)
     events.publish(project_id, {"type": "job_failed", "instruction": instruction, "reason": reason})
     return {"ok": False, "message": f"Sorry, that change didn't work: {reason}"}
 

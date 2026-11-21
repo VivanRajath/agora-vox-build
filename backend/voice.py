@@ -19,7 +19,7 @@ import time
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
-from . import auth, config, prompts_vox, store
+from . import auth, config, events, jobs, prompts_vox, store
 from .agora_token.RtcTokenBuilder2 import Role_Publisher, RtcTokenBuilder
 
 log = logging.getLogger("vox-build.voice")
@@ -154,6 +154,59 @@ async def _watch(agent_id: str, project_id: str) -> None:
             log.info("agent %s [%s] status=%s history=%d last_user=%r", agent_id, project_id, status, seen, last_user)
         if status in ("STOPPED", "FAILED"):
             return
+
+
+# ---------------------------------------------------------------------------
+# Announcements: Vox only answers when the user speaks, so results that land later
+# (a build that outlived the turn, publishing) are spoken with Agora's speak endpoint.
+# ---------------------------------------------------------------------------
+
+def _announcement(project_id: str, event: dict) -> str | None:
+    kind = event.get("type")
+    if kind in ("job_done", "job_failed"):
+        if project_id not in jobs.announce:
+            return None  # the voice turn already said the result
+        jobs.announce.discard(project_id)
+        if kind == "job_failed":
+            return f"That didn't work: {event.get('reason', 'something went wrong')}. Want me to try again?"
+        summary = (event.get("version") or {}).get("summary", "")
+        return f"Done! {summary} Take a look. What would you like to change?"
+    if kind == "published" and event.get("url"):
+        return f"Your site is live at {event['url']}. The QR code is on screen."
+    if kind == "publish" and event.get("state") == "failed":
+        return f"Publishing didn't work: {event.get('reason', '')}. Want me to try again?"
+    return None
+
+
+def _on_event(project_id: str, event: dict) -> None:
+    agent_id = next((a for a, pid in _agents.items() if pid == project_id), None)
+    if not agent_id:
+        if event.get("type") in ("job_done", "job_failed"):
+            jobs.announce.discard(project_id)
+        return
+    text = _announcement(project_id, event)
+    if text:
+        asyncio.get_running_loop().create_task(speak(agent_id, text))
+
+
+async def speak(agent_id: str, text: str) -> None:
+    from .vox_llm import speakable  # vox_llm imports this module
+    text = speakable(text)
+    data = text.encode("utf-8")[:500].decode("utf-8", "ignore")  # Agora's limit is 512 bytes
+    url = f"{config.AGORA_API_BASE}/projects/{config.AGORA_APP_ID}/agents/{agent_id}/speak"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # APPEND: after whatever Vox is saying now; the user can talk over it.
+            r = await client.post(url, headers=_auth_header(), json={"text": data, "priority": "APPEND", "interruptable": True})
+        if r.status_code >= 400:
+            _agora_error(r)
+        else:
+            log.info("agent %s announced: %s", agent_id, data[:120])
+    except httpx.HTTPError as e:
+        log.info("agent %s: announcement failed: %s", agent_id, e)
+
+
+events.add_listener(_on_event)
 
 
 async def _leave(agent_id: str) -> None:

@@ -114,7 +114,9 @@ export function useVoiceCall(projectId) {
     const mic = session.current?.mic;
     if (!mic) return;
     const next = !muted;
-    await mic.setEnabled(!next);
+    // setEnabled(false) and setMuted(true) both look like "user left" to Agora's agent, which then
+    // stops. Sending silence keeps the call (and Vox's announcements) going; only your side is quiet.
+    mic.setVolume(next ? 0 : 100);
     setMuted(next);
   }, [muted]);
 

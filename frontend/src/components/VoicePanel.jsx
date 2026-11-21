@@ -67,7 +67,7 @@ export default function VoicePanel({ voice, heard, thinking, mode, onModeChange,
 
       {live && (
         <button className="text-btn" onClick={voice.toggleMute}>
-          {voice.muted ? "Unmute microphone" : "Mute microphone"}
+          {voice.muted ? "Unmute my microphone" : "Mute my microphone (Vox keeps working)"}
         </button>
       )}
 

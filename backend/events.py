@@ -9,10 +9,23 @@ _subscribers: dict[str, set[asyncio.Queue]] = defaultdict(set)
 _jobs: dict[str, dict] = {}
 
 
+# Server-side listeners, called for every event (voice uses one to announce finished jobs).
+_listeners: list = []
+
+
+def add_listener(fn) -> None:
+    _listeners.append(fn)
+
+
 def publish(project_id: str, event: dict) -> None:
     _track(project_id, event)
     for queue in list(_subscribers.get(project_id, ())):
         queue.put_nowait(event)
+    for fn in _listeners:
+        try:
+            fn(project_id, event)
+        except Exception:  # a listener must never break the job that published
+            pass
 
 
 def job(project_id: str) -> dict | None:
