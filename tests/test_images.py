@@ -52,3 +52,29 @@ def test_hotlinked_unsplash_photos_are_found_and_swapped():
     assert photo_key(url) == "photo-1546182990-dffeafbe841d"
     out = images.replace(files, choice.slots, "images/lion-123456.jpg", "")
     assert '"images/lion-123456.jpg", alt: "A lion at dusk"' in out["src/data/site.js"]
+
+
+def _photo(image, section, **where):
+    return images.Photo(image, [images.Slot("src/data/site.js", 0, 1, image, "", "", section)], [{"src": image, "section": section, **where}] if where else [])
+
+
+def test_position_words_are_resolved_from_the_layout():
+    page = [
+        _photo("images/hero.jpg", "hero", background=True, h="centre", v="middle"),
+        _photo("images/gwen.jpg", "team", h="left", v="bottom", onScreen=True),
+        _photo("images/hector.jpg", "team", h="right", v="bottom", onScreen=True),
+        _photo("images/hoodie.jpg", "merch", h="left", v="top"),
+        _photo("images/keys.jpg", "merch", h="right", v="top"),
+    ]
+    assert images.spatial(page, "the image on the left is not looking good") == 2
+    assert images.spatial(page, "change the one on the right") == 3
+    assert images.spatial(page, "change the background image") == 1
+    assert images.spatial(page, "the left image in the merch section") == 4
+    assert images.spatial(page, "change the keychain picture") == 0  # no position words: the model decides
+
+
+def test_placeholder_photos_are_found_and_described_by_their_card():
+    files = {"src/data/site.js": 'export const site = { team: [ { name: "Gwen Stacy", img: "https://picsum.photos/seed/gwen/400/400" } ] };'}
+    (slot,) = images.find_slots(files)
+    assert slot.image == "https://picsum.photos/seed/gwen/400/400"
+    assert images.describe(slot) == "the picture for 'Gwen Stacy'"

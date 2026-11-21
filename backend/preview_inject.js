@@ -77,6 +77,62 @@
     }, "*");
   }, true);
 
+  // The page's photos as the user sees them, so "the image on the left" or "the background" can be
+  // resolved: section, left/right, top/bottom, size, and whether text sits on top of it.
+  function srcOf(raw) {
+    if (!raw) return "";
+    try {
+      var abs = new URL(raw, document.baseURI).href;
+      var base = document.baseURI.replace(/[^/]*$/, "");
+      return abs.indexOf(base) === 0 ? abs.slice(base.length) : abs;
+    } catch (_) { return raw; }
+  }
+
+  function layout() {
+    var found = [];
+    var all = document.body ? document.body.getElementsByTagName("*") : [];
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i], src = "", alt = "";
+      if (el.tagName === "IMG") { src = el.getAttribute("src"); alt = el.getAttribute("alt") || ""; }
+      else {
+        var bg = getComputedStyle(el).backgroundImage;
+        var m = bg && bg.match(/url\(["']?([^"')]+)["']?\)/);
+        if (m) src = m[1];
+      }
+      if (!src) continue;
+      var r = el.getBoundingClientRect();
+      if (r.width < 40 || r.height < 40) continue;
+      var sec = el.closest("section,header,footer,[data-section]") || document.body;
+      var s = sec.getBoundingClientRect();
+      var cx = (r.left + r.width / 2 - s.left) / (s.width || 1);
+      var cy = (r.top + r.height / 2 - s.top) / (s.height || 1);
+      var coverage = (r.width * r.height) / ((s.width * s.height) || 1);
+      var textOnTop = Array.prototype.some.call(sec.querySelectorAll("h1,h2,h3,p,a,button"), function (t) {
+        if (el.contains(t)) return el.tagName !== "IMG";
+        var tr = t.getBoundingClientRect();
+        return tr.left < r.right && tr.right > r.left && tr.top < r.bottom && tr.bottom > r.top;
+      });
+      found.push({
+        src: srcOf(src),
+        alt: alt,
+        section: sec.id || sec.getAttribute("data-section") || sec.tagName.toLowerCase(),
+        background: coverage > 0.6 && textOnTop,
+        h: cx < 0.38 ? "left" : cx > 0.62 ? "right" : "centre",
+        v: cy < 0.33 ? "top" : cy > 0.66 ? "bottom" : "middle",
+        width: Math.round((r.width / (s.width || 1)) * 100),
+        y: Math.round(r.top + window.scrollY),
+        // What the user is looking at right now ("the image on the left" means one of these).
+        onScreen: r.bottom > 60 && r.top < window.innerHeight - 60,
+      });
+    }
+    parent.postMessage({ source: "vox-build", type: "layout", images: found.slice(0, 60) }, "*");
+  }
+  var layoutTimer = null;
+  function layoutSoon() { clearTimeout(layoutTimer); layoutTimer = setTimeout(layout, 900); }
+  window.addEventListener("load", layoutSoon);
+  window.addEventListener("resize", layoutSoon);
+  window.addEventListener("scroll", layoutSoon, { passive: true });
+
   window.addEventListener("message", function (e) {
     var d = e.data || {};
     if (d.source !== "vox-build-host") return;

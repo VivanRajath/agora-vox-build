@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, config, events, github, jobs, llm, store, users, voice, vox_llm, vox_tools
-from .editor import engine
+from .editor import engine, images
 
 log = logging.getLogger("vox-build")
 # Windows may not know .wasm; the browser needs the right type to compile the noise-suppression module.
@@ -136,6 +136,15 @@ async def select(project_id: str, request: Request):
     selection = (await request.json()).get("selection")
     store.set_selection(project_id, selection)
     events.publish(project_id, {"type": "selection", "selection": selection})
+    return {"ok": True}
+
+
+@app.post("/api/projects/{project_id}/layout")
+async def page_layout(project_id: str, request: Request):
+    """Where each photo sits in the preview (section, left/right, background), reported by the page itself."""
+    _require_project(project_id)
+    items = (await request.json()).get("images") or []
+    images.remember_layout(project_id, items if isinstance(items, list) else [])
     return {"ok": True}
 
 

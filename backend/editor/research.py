@@ -144,7 +144,7 @@ async def _find_one(client: httpx.AsyncClient, images_dir, need: dict) -> dict |
     candidate = None
     for q in queries:
         if config.UNSPLASH_ACCESS_KEY:
-            candidate = await _search_unsplash(client, q, avoid)
+            candidate = await _search_unsplash(client, q, avoid, need.get("tone", "any"))
             if candidate:
                 # Unsplash photos are hotlinked (their guideline), and the use is reported.
                 await _report_unsplash_use(client, candidate["download_location"])
@@ -193,7 +193,16 @@ def photo_key(src: str) -> str:
     return src.rsplit("-", 1)[-1].split(".")[0]
 
 
-async def _search_unsplash(client: httpx.AsyncClient, query: str, avoid: set[str] = frozenset()) -> dict | None:
+def luminance(hex_colour: str) -> float:
+    """0 (black) to 1 (white), from a photo's average colour like '#a3b2c1'."""
+    try:
+        r, g, b = (int(hex_colour.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    except (ValueError, TypeError):
+        return 0.5
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+async def _search_unsplash(client: httpx.AsyncClient, query: str, avoid: set[str] = frozenset(), tone: str = "any") -> dict | None:
     r = await client.get(
         UNSPLASH_API,
         params={"query": query, "per_page": 10, "orientation": "landscape", "content_filter": "high"},
@@ -202,7 +211,13 @@ async def _search_unsplash(client: httpx.AsyncClient, query: str, avoid: set[str
     if r.status_code != 200:
         log.info("unsplash search %r: HTTP %s", query, r.status_code)
         return None
-    for photo in r.json().get("results", []):
+    results = [p for p in r.json().get("results", []) if photo_key(f"{p['urls']['raw']}&") not in avoid]
+    if tone in ("bright", "dark") and results:
+        # "Brighter" / "darker": among the most relevant hits, the one whose average colour fits best.
+        top = results[:6]
+        top.sort(key=lambda p: luminance(p.get("color", "")), reverse=tone == "bright")
+        results = top + results[6:]
+    for photo in results:
         url = f"{photo['urls']['raw']}&w=1600&q=80&fm=jpg&fit=max"
         if photo_key(url) in avoid:
             continue

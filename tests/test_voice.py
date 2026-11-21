@@ -332,7 +332,7 @@ def test_change_image_trusts_the_users_words_over_a_bare_this(monkeypatch):
     store.update(meta["id"], current=1)
     seen = []
 
-    async def fake(pid, target, subject):
+    async def fake(pid, target, subject, request=""):
         seen.append(target)
         return {"ok": True, "message": "Swapped."}
 

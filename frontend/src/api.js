@@ -17,6 +17,7 @@ export const api = {
   command: (id, text) => request(`/api/projects/${id}/command`, { method: "POST", body: JSON.stringify({ text }) }),
   undo: (id) => request(`/api/projects/${id}/undo`, { method: "POST" }),
   restore: (id, n) => request(`/api/projects/${id}/restore/${n}`, { method: "POST" }),
+  layout: (id, images) => request(`/api/projects/${id}/layout`, { method: "POST", body: JSON.stringify({ images }) }),
   select: (id, selection) => request(`/api/projects/${id}/select`, { method: "POST", body: JSON.stringify({ selection }) }),
   setMode: (id, mode) => request(`/api/projects/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
   publish: (id, body) => request(`/api/projects/${id}/publish`, { method: "POST", body: JSON.stringify(body) }),

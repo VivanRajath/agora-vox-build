@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { api } from "../api.js";
 import { DesktopIcon, ExternalIcon, PhoneIcon, TabletIcon } from "./icons.jsx";
 
 const DEVICES = {
@@ -22,10 +23,12 @@ export default function Preview({ projectId, version, latest, reloadKey, busy, t
       if (e.data?.source !== "vox-build") return;
       if (e.data.type === "select") onSelect(e.data.selection);
       else if (e.data.type === "scroll") scrollY.current = e.data.y;
+      // Where each photo sits on the page, so Vox understands "the image on the left".
+      else if (e.data.type === "layout") api.layout(projectId, e.data.images).catch(() => {});
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [onSelect]);
+  }, [onSelect, projectId]);
 
   useEffect(() => {
     post({ type: "pick", on: picking });

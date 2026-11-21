@@ -188,36 +188,48 @@ async def edit(project_id: str, instruction: str) -> dict:
         return _fail(project_id, instruction, _short_error(error) or "Could not apply that change")
 
 
-async def change_image(project_id: str, target: str, new_subject: str = "") -> dict:
-    """Swaps one photo: find it from the user's words or click, fetch a new one, change only its path.
+async def change_image(project_id: str, target: str, new_subject: str = "", request: str = "") -> dict:
+    """Swaps one photo: work out which one the user means (their words, the page layout, a click),
+    fetch a new one that matches what they asked for, change only its path and alt text.
     No model writes code here, so the rest of the site can't change."""
-    instruction = f"Change the {target} photo" + (f" to {new_subject}" if new_subject else "")
+    instruction = request or (f"Change the {target} photo" + (f" to {new_subject}" if new_subject else ""))
     async with _locks[project_id]:
         events.publish(project_id, {"type": "job_started", "kind": "image", "instruction": instruction, "tier": "photos"})
         files = store.read_files(project_id)
-        choice = images.pick(files, target, store.load_meta(project_id).get("selection"))
-        if not choice.slots:
-            return _fail(project_id, instruction, choice.message)
+        meta = store.load_meta(project_id)
+        selection = meta.get("selection")
+        wish: dict = {}
+        try:
+            # A small model reads the user's sentence against the page's real layout
+            # ("the image on the left", "the background", "make it brighter").
+            slots, wish, question = await images.resolve(files, project_id, instruction, selection, meta.get("brief"))
+        except (llm.LLMError, ValueError) as e:
+            log.info("photo resolver unavailable, matching words instead: %s", e)
+            choice = images.pick(files, target, selection)
+            slots, question = choice.slots, choice.message
+        if not slots:
+            return _fail(project_id, instruction, question)
 
-        old_alt = choice.alt
-        subject = new_subject.strip() or old_alt or images.describe(choice.slots[0])
-        old_id = research.photo_key(choice.image)
-        slug = re.sub(r"[^a-z0-9]+", "-", (new_subject or "photo").lower()).strip("-")[:24] or "photo"
+        old_alt = next((s.alt for s in slots if s.alt), "")
+        subject = wish.get("query") or new_subject.strip() or old_alt or images.describe(slots[0])
+        new_alt = wish.get("alt") or (new_subject.strip().capitalize() if new_subject.strip() else old_alt)
+        slug = re.sub(r"[^a-z0-9]+", "-", subject.lower()).strip("-")[:24] or "photo"
         need = {
             "slot": slug,
-            "query": " ".join(subject.split()[:6]),
+            "query": " ".join(subject.split()[:7]),
             "fallback": " ".join(subject.split()[-2:]),
-            "alt": new_subject.strip().capitalize() if new_subject.strip() else old_alt,
-            "avoid": [old_id],
+            "alt": new_alt,
+            "avoid": [research.photo_key(slots[0].image)],
+            "tone": wish.get("tone", "any"),
         }
         found = await research.find_images(project_id, [need])
         if not found:
             return _fail(project_id, instruction, f"I couldn't find a photo of {subject}. Try describing it another way")
         photo = found[0]
         _publish_research(project_id, None, found)
-        new_files = images.replace(files, choice.slots, photo["path"], photo["alt"] if new_subject.strip() else "")
-        where = f" in {len(choice.slots)} places" if len(choice.slots) > 1 else ""
-        summary = f"Swapped that photo{where} for {'a new one showing ' + new_subject.strip() if new_subject.strip() else 'a different one'}."
+        new_files = images.replace(files, slots, photo["path"], new_alt if new_alt != old_alt else "")
+        where = f" in {len(slots)} places" if len(slots) > 1 else ""
+        summary = f"Swapped that photo{where} for {subject}."
         try:
             version = await _commit(project_id, new_files, [], summary, instruction, "photos")
         except EditFailed as e:

@@ -287,7 +287,8 @@ async def change_image(project_id: str, args: dict) -> dict:
         target = said
     if store.load_meta(project_id)["current"] == 0:
         return {"status": "failed", "message": "There's no site yet. Let's build it first."}
-    return await jobs.answer_voice(project_id, engine.change_image(project_id, target, str(args.get("new_subject") or "").strip()))
+    request = said or str(args.get("request") or "")
+    return await jobs.answer_voice(project_id, engine.change_image(project_id, target, str(args.get("new_subject") or "").strip(), request))
 
 
 @tool("undo_change", "Undo the last change to the website.", filler="Undoing that.")
@@ -444,7 +445,7 @@ def typed_tool(project_id: str, text: str) -> tuple[str, dict]:
     swap = re.match(r"(change|replace|swap|use)\b.*?\b(image|photo|picture|pic)s?\b(?:\s+(?:to|with|for)\s+(?:a|an)?\s*(?P<subject>.+))?", words)
     if meta["current"] > 0 and swap:
         target = re.sub(r"^(change|replace|swap|use)\s+|\s*\b(to|with|for)\b.*$", "", words) or "this"
-        return "change_image", {"target": target, "new_subject": (swap.group("subject") or "").strip()}
+        return "change_image", {"target": target, "new_subject": (swap.group("subject") or "").strip(), "request": text}
     if meta["current"] == 0:
         # Typing is already "one request", so one-shot builds it; business plans it for approval.
         if mode(meta) == "oneshot":
