@@ -31,14 +31,38 @@ ALLOWED_PACKAGES = {"react", "react-dom", "lucide-react", "framer-motion"}
 
 DEFAULT_FONTS = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap"
 
-MAIN_JSX = """import { StrictMode } from "react";
+MAIN_JSX = """import { Component, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App.jsx";
 
+// If something on the page crashes, show a note instead of a blank screen.
+class Safe extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error) {
+    window.parent?.postMessage({ source: "vox-build", type: "crash", message: String(error?.message || error) }, "*");
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontFamily: "system-ui, sans-serif", padding: 24, textAlign: "center" }}>
+        <div>
+          <p style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Part of this page hit an error.</p>
+          <p style={{ color: "#666", marginTop: 8 }}>{String(this.state.error?.message || this.state.error)}</p>
+        </div>
+      </div>
+    );
+  }
+}
+
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    <App />
+    <Safe>
+      <App />
+    </Safe>
   </StrictMode>
 );
 """

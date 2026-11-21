@@ -70,7 +70,31 @@ def _repair_files(files: dict[str, str], error: str) -> dict[str, str]:
     if not _tight():
         return _llm_files(files)
     named = [p for p in re.findall(r"src/[\w./-]+\.(?:jsx|js|css)", error or "") if site_template.LLM_FILE_RE.match(p)]
-    return _focus(files, [*named, "src/App.jsx", "src/data/site.js", "src/index.css"])
+    chosen = _focus(files, [*named, "src/App.jsx", "src/data/site.js", "src/index.css"])
+    data = files.get("src/data/site.js", "")
+    if data and "src/data/site.js" not in chosen:
+        # A render crash usually means a component and site.js disagree, but site.js is often too big for
+        # the budget. Give the part the crashing components read (e.g. the `hero` block); SEARCH blocks
+        # copied from it still match the full file.
+        excerpt = _data_excerpt(data, [p.rsplit("/", 1)[-1].removesuffix(".jsx") for p in named if "/components/" in p])
+        if excerpt:
+            chosen["src/data/site.js"] = excerpt
+    return chosen
+
+
+def _data_excerpt(data: str, components: list[str], limit: int = 6000) -> str:
+    """The site.js blocks for these components ("Hero" -> the `hero: {...}` block), joined."""
+    parts = []
+    for name in components:
+        kebab = re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
+        camel = name[:1].lower() + name[1:]
+        for key in dict.fromkeys((camel, kebab, kebab.replace("-", "_"))):
+            m = re.search(r"""(?m)^[ \t]*["']?""" + re.escape(key) + r"""["']?\s*:\s*\{""", data)
+            if m:
+                end = images._close(data, data.index("{", m.start()))
+                parts.append(data[m.start(): end + 1])
+                break
+    return "\n\n".join(parts)[:limit]
 FULL_MAX_TOKENS = 20000
 
 # Words that point at a component even when its name isn't said.

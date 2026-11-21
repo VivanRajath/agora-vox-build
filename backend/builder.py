@@ -1,13 +1,4 @@
-"""Builds a site's React source into static files, in well under a second.
 
-  esbuild    src/main.jsx -> bundle.js (React resolved from the shared runtime/node_modules)
-  tailwind   src/index.css -> styles.css (Tailwind v4 standalone CLI)
-  html       site_template.built_html with the fonts link
-
-A build doubles as the validator for every edit: if the import whitelist, esbuild
-or Tailwind rejects the result, the edit fails and escalates to the next tier
-with the error text.
-"""
 import asyncio
 import logging
 import os
@@ -109,10 +100,74 @@ def _build_sync(stage: Path, public_dir: Path | None, title: str, fonts_url: str
     code, text = css_code, css_text
     if code != 0 or not (out / "styles.css").is_file():
         return BuildResult(False, "Tailwind: " + _tidy(text, stage), ms=_ms(start), stage=stage)
+    crash = _render_check(stage, env)
+    if crash:
+        return BuildResult(False, crash, ms=_ms(start), stage=stage)
     (out / "index.html").write_text(site_template.built_html(title, fonts_url), encoding="utf-8")
     if public_dir and public_dir.is_dir():
         shutil.copytree(public_dir, out, dirs_exist_ok=True)
     return BuildResult(True, out_dir=out, ms=_ms(start), stage=stage)
+
+
+# Code that compiles can still crash when React renders it ("Cannot read properties of undefined
+# (reading 'map')" when a component and site.js disagree), and then the whole page is blank. So every
+# build also renders the App once in Node; a crash fails the build like a compile error, and the
+# error (with the component file) goes to the next developer tier or the repair pass.
+RENDER_CHECK = """
+import { renderToString } from "react-dom/server";
+import App from "./src/App.jsx";
+console.error = () => {};
+try {
+  renderToString(<App />);
+  process.stdout.write("RENDER_OK");
+} catch (e) {
+  process.stdout.write("RENDER_ERROR " + (e && e.stack ? e.stack : String(e)));
+}
+"""
+# Browser globals some components read while rendering; Node lacks them, which isn't the site's fault.
+RENDER_SHIM = (
+    "globalThis.window=globalThis.window||globalThis;"
+    "globalThis.matchMedia=globalThis.matchMedia||(()=>({matches:false,addEventListener(){},removeEventListener(){},addListener(){},removeListener(){}}));"
+    "globalThis.innerWidth=globalThis.innerWidth||1280;globalThis.innerHeight=globalThis.innerHeight||800;"
+    "for(const n of ['HTMLElement','SVGElement','Element','Node','Image','Event','CustomEvent'])globalThis[n]=globalThis[n]||class{};"
+)
+ENVIRONMENT_ERRORS = re.compile(
+    r"\b(document|navigator|location|localStorage|sessionStorage|IntersectionObserver|ResizeObserver|MutationObserver|"
+    r"requestAnimationFrame|cancelAnimationFrame|getComputedStyle|HTMLElement|SVGElement|Element|Node|DOMRect|CSS|scrollTo)\b"
+)
+NODE = shutil.which("node")
+
+
+def _render_check(stage: Path, env: dict) -> str:
+    """Empty when the page renders (or the check can't run here); otherwise the crash, for the next developer."""
+    if not NODE:
+        return ""
+    (stage / "_render_check.jsx").write_text(RENDER_CHECK, encoding="utf-8")
+    code, text = _run([
+        str(ESBUILD), "_render_check.jsx", "--bundle", "--platform=node", "--format=cjs", "--outfile=_render_check.cjs",
+        "--jsx=automatic", "--loader:.js=jsx", "--loader:.css=empty", "--sourcemap=inline", f"--banner:js={RENDER_SHIM}",
+        "--define:process.env.NODE_ENV=\"production\"", "--log-level=error", "--color=false",
+    ], stage, env)
+    if code != 0:
+        return ""  # the browser bundle built, so this is the check's problem, not the site's
+    try:
+        code, text = _run([NODE, "--enable-source-maps", "_render_check.cjs"], stage, env)
+    except subprocess.TimeoutExpired:
+        return "The page never finished rendering (an endless loop while rendering?)."
+    if "RENDER_OK" in text or "RENDER_ERROR" not in text:
+        return ""
+    error = text.split("RENDER_ERROR", 1)[1].strip()
+    first = error.splitlines()[0] if error else "unknown error"
+    if ENVIRONMENT_ERRORS.search(first):
+        return ""  # e.g. "document is not defined": fine in the browser
+    stack = [ln.strip() for ln in error.splitlines()[1:] if ln.strip().startswith("at ")]
+    # Only the site's own code counts: a crash that starts inside a library (framer-motion reaching for
+    # window.addEventListener...) is Node missing browser pieces, not a broken page.
+    if not stack or "src/" not in stack[0].replace("\\", "/"):
+        return ""
+    frames = [ln for ln in stack if "src/" in ln.replace("\\", "/")][:4]
+    where = "\n".join(_tidy(f, stage) for f in frames)
+    return f"The page builds but crashes when it renders, so it shows a blank screen:\n{first}\n{where}".strip()
 
 
 def _tidy(text: str, stage: Path) -> str:

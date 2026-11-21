@@ -296,3 +296,17 @@ def test_spoken_plan_names_colours():
     text = research.spoken_plan({"business": "Sweet Crumbs", "style": {"direction": "warm editorial"},
                                  "sections": [{"id": "hero"}, {"id": "custom-cakes"}], "palette": {"background": "#fdf3e1", "primary": "#5a3825", "accent": "#c2185b"}})
     assert "warm editorial" in text and "custom cakes" in text and "#" not in text
+
+
+def test_a_page_that_crashes_while_rendering_fails_the_build(tmp_path):
+    import asyncio
+    from backend import builder, site_template
+    if not builder.NODE or not builder.tools_ready():
+        import pytest
+        pytest.skip("node or build tools not installed")
+    files = dict(site_template.STARTER_FILES)
+    files["src/App.jsx"] = 'import { site } from "./data/site.js";\nexport default function App() {\n  return <ul>{site.missing.map((x) => <li key={x}>{x}</li>)}</ul>;\n}\n'
+    files["src/data/site.js"] = "export const site = {};\n"
+    files.update(site_template.fixed_files("Test", ""))
+    result = asyncio.run(builder.build(files, tmp_path, None, "Test", ""))
+    assert not result.ok and "crashes when it renders" in result.errors and "src/App.jsx" in result.errors
