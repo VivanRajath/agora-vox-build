@@ -50,7 +50,9 @@ def speak_url(url: str) -> str:
 
 
 def speakable(text: str) -> str:
-    """No markdown, code or raw URLs in what Murf reads out."""
+    """No markdown, code, reasoning tags or raw URLs in what Murf reads out."""
+    text = re.sub(r"<think>.*?(</think>|$)", " ", text, flags=re.DOTALL)
+    text = re.sub(r"</?think>?", " ", text)
     text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
     text = URL_RE.sub(lambda m: speak_url(m.group(0)), text)
     text = re.sub(r"[*_`#>|]+", "", text)
@@ -75,6 +77,42 @@ def _history(messages: list[dict]) -> list[dict]:
     return convo[-MAX_HISTORY:]
 
 
+# A plain "yes" to the question Vox just asked. Anything with a change in it goes to the model.
+YES_RE = re.compile(
+    r"^(yes|yeah|yep|yup|ya|sure|ok|okay|alright|all right|go ahead|go for it|do it|build it|publish it|"
+    r"sounds good|sounds great|looks good|looks great|perfect|great|let'?s do it|let'?s go|please do|approved?)\b"
+)
+CHANGE_RE = re.compile(r"\b(but|change|instead|add|remove|make|without|except|no|not|don'?t|wait|hold on|what|how|why)\b")
+
+# Results the user must hear word for word (a plan to approve, what publishing will do), so the
+# model isn't asked to paraphrase them, and doesn't get a chance to drop them.
+SPEAK_VERBATIM = {"needs_approval", "name_taken", "needs_github"}
+
+
+def is_approval(text: str) -> bool:
+    words = re.sub(r"[^\w\s']", " ", text.lower()).strip()
+    words = re.sub(r"\s+", " ", words)
+    return bool(words) and len(words.split()) <= 8 and bool(YES_RE.match(words)) and not CHANGE_RE.search(words)
+
+
+def approved_action(project_id: str, user_text: str) -> tuple[str, dict] | None:
+    """The tool a plain yes approves, if Vox is waiting on one.
+
+    Small conversation models sometimes answer "yes, go ahead" with "building it now" and no tool
+    call, so nothing happens. A yes to a pending question is unambiguous, so the server acts on it.
+    The publish approval is still the server's own (publish_site checks it again).
+    """
+    if not is_approval(user_text):
+        return None
+    meta = store.load_meta(project_id)
+    pending = meta.get("publish_approval") or {}
+    if pending.get("repo") and time.time() - pending.get("ts", 0) < vox_tools.APPROVAL_TTL:
+        return "publish_site", {"repo_name": pending["repo"].split("/")[-1], "confirmed": True}
+    if meta.get("draft") and (events.job(project_id) or {}).get("state") != "working":
+        return "build_site", {}
+    return None
+
+
 async def converse(project_id: str, messages: list[dict]):
     """Yields spoken text pieces for one user turn, running tools in between."""
     llm.use_settings(jobs.owner_settings(project_id))
@@ -84,6 +122,19 @@ async def converse(project_id: str, messages: list[dict]):
         events.publish(project_id, {"type": "transcript", "role": "user", "text": user_text})
 
     spoken: list[str] = []
+    action = approved_action(project_id, user_text) if user_text else None
+    if action:
+        name, args = action
+        log.info("approval %r -> %s %s", user_text, name, args)
+        filler = vox_tools.TOOLS[name].filler
+        yield filler + " "
+        result = await vox_tools.run(project_id, name, args)
+        reply = speakable(str(result.get("message", "")))
+        if reply:
+            yield reply
+        events.publish(project_id, {"type": "transcript", "role": "assistant", "text": f"{filler} {reply}".strip()})
+        return
+
     tools = vox_tools.specs()
     try:
         for _ in range(MAX_ROUNDS):
@@ -107,9 +158,17 @@ async def converse(project_id: str, messages: list[dict]):
                     for c in reply.tool_calls
                 ],
             })
+            verbatim = None
             for call in reply.tool_calls:
+                log.info("tool call %s %s", call.name, call.arguments)
                 result = await vox_tools.run(project_id, call.name, call.arguments)
                 convo.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
+                if result.get("status") in SPEAK_VERBATIM and result.get("message"):
+                    verbatim = speakable(result["message"])
+            if verbatim:
+                spoken.append(verbatim)
+                yield verbatim
+                break
         else:
             closing = "I've started on that. It will show up on screen shortly."
             spoken.append(closing)

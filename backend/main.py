@@ -25,6 +25,12 @@ from . import auth, config, events, github, jobs, llm, store, users, voice, vox_
 from .editor import engine
 
 log = logging.getLogger("vox-build")
+# uvicorn only configures its own loggers; show ours too (tool calls, builds, publishing).
+if not log.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s", "%H:%M:%S"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
 app = FastAPI(title="Vox Build")
 app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET, session_cookie="vox-build", max_age=30 * 86400, same_site="lax")
 app.include_router(auth.router)

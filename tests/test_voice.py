@@ -132,3 +132,60 @@ def test_anthropic_history_conversion():
     assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant", "user"]
     assert msgs[3]["content"][1] == {"type": "tool_use", "id": "t1", "name": "plan_site", "input": {"description": "bakery"}}
     assert msgs[4]["content"][0]["type"] == "tool_result"
+
+
+@pytest.mark.parametrize("text,ok", [
+    ("Yes.", True), ("yes go ahead", True), ("Sounds good, build it!", True), ("okay let's do it", True),
+    ("yes but add a gallery", False), ("no", False), ("make it blue", False), ("what colours?", False),
+])
+def test_is_approval(text, ok):
+    assert vox_llm.is_approval(text) is ok
+
+
+def test_yes_builds_the_draft_without_the_model(monkeypatch):
+    meta = store.create()
+    store.update(meta["id"], draft={"description": "a cafe", "brief": {}, "spoken": "plan"})
+    ran = []
+
+    async def fake_run(pid, name, args):
+        ran.append((name, args))
+        return {"status": "in_progress", "message": "Building the site now."}
+
+    async def no_model(*a, **k):
+        raise AssertionError("the model should not be called for a plain yes")
+
+    monkeypatch.setattr(vox_tools, "run", fake_run)
+    monkeypatch.setattr(llm, "chat", no_model)
+    r = client.post(
+        f"/llm/{meta['id']}/chat/completions",
+        headers={"Authorization": f"Bearer {voice.make_llm_token(meta['id'])}"},
+        json={"stream": True, "messages": [{"role": "assistant", "content": "Shall I build it?"}, {"role": "user", "content": "Yes, go ahead."}]},
+    )
+    assert ran == [("build_site", {})]
+    assert "Building the site now." in "".join(c["choices"][0]["delta"].get("content", "") for c in _events(r.text))
+
+
+def test_plan_is_spoken_verbatim(monkeypatch):
+    meta = store.create()
+    rounds = []
+
+    async def fake_chat(*a, **k):
+        rounds.append(1)
+        return llm.Reply("", [llm.ToolCall("t1", "plan_site", {"description": "a cafe"})])
+
+    async def fake_run(pid, name, args):
+        return {"status": "needs_approval", "message": "Sections: hero, menu, visit. Shall I build it?"}
+
+    monkeypatch.setattr(llm, "chat", fake_chat)
+    monkeypatch.setattr(vox_tools, "run", fake_run)
+    r = client.post(
+        f"/llm/{meta['id']}/chat/completions",
+        headers={"Authorization": f"Bearer {voice.make_llm_token(meta['id'])}"},
+        json={"stream": True, "messages": [{"role": "user", "content": "a website for my cafe"}]},
+    )
+    text = "".join(c["choices"][0]["delta"].get("content", "") for c in _events(r.text))
+    assert "Sections: hero, menu, visit. Shall I build it?" in text and len(rounds) == 1
+
+
+def test_speakable_strips_reasoning():
+    assert vox_llm.speakable("<think>plan the call</think>Building it now. </think") == "Building it now."
