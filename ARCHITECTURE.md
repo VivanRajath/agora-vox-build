@@ -61,7 +61,11 @@ One registry (name, JSON schema, filler line, async handler) shared by voice and
 |---|---|
 | `plan_site(description)` | Researcher only. Returns a spoken plan (business, style, sections, palette in words) as `needs_approval`, and stores the brief as a draft |
 | `build_site(changes?)` | Builds from the approved draft. With changes, the researcher re-plans first so the brief includes them |
+| `create_site(description)` | One-shot mode: the researcher fills in the rest and the team builds at once |
+| `submit_brief(...)` | Business mode: the interview answers become a report shown on screen; the researcher plans from it |
+| `set_mode(mode)` | One-shot or business (also a switch in the sidebar) |
 | `edit_site(instruction)` | Any change to the built site |
+| `change_image(target, new_subject?)` | Swaps one photo: `editor/images.py` finds it from the user's words or click (alt text, section, file name), a new photo is fetched (never the same one), and only its path and alt change, then build. No model writes code |
 | `undo_change()` | Revert to the previous version |
 | `describe_site()` | Sections in `App.jsx` order, no LLM call |
 | `check_progress()` | Latest job: planning, building, fixing a build error, done, failed |

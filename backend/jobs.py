@@ -40,5 +40,9 @@ async def answer_voice(project_id: str, coro) -> dict:
         result = await asyncio.wait_for(asyncio.shield(task), config.TOOL_SYNC_WAIT)
     except asyncio.TimeoutError:
         announce.add(project_id)
-        return {"status": "in_progress", "message": "Working on it. It will show up on screen in a few seconds."}
+        return {
+            "status": "in_progress",
+            "message": "Working on it. It will show up on screen in a few seconds.",
+            "note": "NOT finished yet. Say it's on its way; never say it's done. You'll announce the result automatically when it lands.",
+        }
     return {"status": "done" if result["ok"] else "failed", "message": result["message"]}

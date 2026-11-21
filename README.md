@@ -143,7 +143,7 @@ cd frontend && npm run dev        # http://localhost:5173, proxies to :8000
 | `ASR_LANGUAGE` | Speech recognition language (default `en-US`; `en-IN` is also supported) |
 | `END_OF_SPEECH` | Optional: `semantic` (the turn ends when the thought is finished) or `vad`. Empty keeps Agora's defaults |
 | `INTERRUPT_MS` | Optional: how long you must speak to interrupt Vox. Empty keeps Agora's 160 ms |
-| `VOX_LLM_TIER` | Model tier for Vox's conversation (default `jnr`, the fast model) |
+| `VOX_LLM_TIER` | Model tier for Vox's conversation. Empty: `gpt-oss-20b` on Groq (reliable tool calls, its own quota), the `jnr` model elsewhere. `MODEL_VOX` picks an exact model |
 | `PUBLIC_BASE_URL` | Public https URL of this backend; Agora calls `{PUBLIC_BASE_URL}/llm/...` (Render sets it automatically) |
 | `TOOL_SECRET` | Signs the per-session token Agora sends to `/llm` (bound to the project, expires after 4 hours) |
 | `TOOL_SYNC_WAIT` | Seconds a tool waits for a job before answering "working on it" (default 8) |

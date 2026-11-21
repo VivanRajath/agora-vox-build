@@ -41,6 +41,7 @@ def _token(request: Request) -> str:
 # ---------------------------------------------------------------------------
 
 URL_RE = re.compile(r"https?://([^\s]+)")
+EMOJI_RE = re.compile("[🀀-🫿☀-➿️‍]")
 
 
 def speak_url(url: str) -> str:
@@ -54,6 +55,7 @@ def speakable(text: str) -> str:
     text = re.sub(r"<think>.*?(</think>|$)", " ", text, flags=re.DOTALL)
     text = re.sub(r"</?think>?", " ", text)
     text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    text = EMOJI_RE.sub("", text)
     text = URL_RE.sub(lambda m: speak_url(m.group(0)), text)
     text = re.sub(r"[*_`#>|]+", "", text)
     text = re.sub(r"^\s*[-•]\s+", "", text, flags=re.MULTILINE)
@@ -75,6 +77,26 @@ def _history(messages: list[dict]) -> list[dict]:
             if text:
                 convo.append({"role": role, "content": text})
     return convo[-MAX_HISTORY:]
+
+
+# Small conversation models sometimes say they're doing something without calling the tool for it.
+CLAIM_RE = re.compile(
+    r"\b(i'?ll|i will|let me|right away|on it|changing|swapping|updating|adding|removing|replacing|finding|"
+    r"building|making|publishing|creating|fixing|switching|undoing)\b",
+    re.IGNORECASE,
+)
+NUDGE = (
+    "[Note from the system, not the user: you said you are doing something but made no tool call, so nothing "
+    "happened. Call the right tool now. If you really need more information, ask one short question instead.]"
+)
+
+
+# Tools that start a job on the site; only one of them runs per user turn.
+JOB_TOOLS = {"create_site", "build_site", "edit_site", "change_image", "undo_change"}
+
+
+def claims_action(text: str) -> bool:
+    return bool(text) and not text.rstrip().endswith("?") and bool(CLAIM_RE.search(text))
 
 
 def _new_user_text(messages: list[dict]) -> str:
@@ -150,6 +172,9 @@ async def converse(project_id: str, messages: list[dict]):
         return
 
     tools = vox_tools.specs(project_id)
+    vox_tools.turn_text.set(user_text)
+    nudged = False
+    done: dict[str, dict] = {}  # the same call twice in one turn runs once (no double photo swaps)
     try:
         for _ in range(MAX_ROUNDS):
             reply = await llm.chat(prompts_vox.system(project_id), convo, "vox", tools=tools, max_tokens=REPLY_TOKENS)
@@ -158,6 +183,13 @@ async def converse(project_id: str, messages: list[dict]):
                 spoken.append(text)
                 yield text + " "
             if not reply.tool_calls:
+                if not nudged and claims_action(text):
+                    # "Swapping it now" with no tool call means nothing happens; give the model one more go.
+                    nudged = True
+                    log.info("claimed an action without a tool call [%s]: %r", project_id, text[:120])
+                    convo.append({"role": "assistant", "content": reply.text})
+                    convo.append({"role": "user", "content": NUDGE})
+                    continue
                 break
             if not text:
                 filler = vox_tools.TOOLS.get(reply.tool_calls[0].name)
@@ -174,8 +206,15 @@ async def converse(project_id: str, messages: list[dict]):
             })
             verbatim = None
             for call in reply.tool_calls:
-                log.info("tool call %s %s", call.name, call.arguments)
-                result = await vox_tools.run(project_id, call.name, call.arguments)
+                key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+                if key in done:
+                    result = done[key]
+                elif call.name in JOB_TOOLS and any(k.split(":", 1)[0] in JOB_TOOLS for k in done):
+                    # One change per turn: a second job would undo or redo the first.
+                    result = {"status": "in_progress", "message": "Already working on the change from this turn. Wait for the user."}
+                else:
+                    log.info("tool call %s %s", call.name, call.arguments)
+                    result = done[key] = await vox_tools.run(project_id, call.name, call.arguments)
                 convo.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)})
                 if result.get("status") in SPEAK_VERBATIM and result.get("message"):
                     verbatim = speakable(result["message"])

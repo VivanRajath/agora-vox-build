@@ -7,7 +7,9 @@ The track flow: plan_site -> (user approves or changes) -> build_site ->
 edit_site / undo_change ... -> publish_site (needs_approval) -> user says yes ->
 publish_site(confirmed) -> publication_status -> live URL.
 """
+import contextvars
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -18,6 +20,9 @@ from .editor import engine
 log = logging.getLogger("vox-build.tools")
 
 Handler = Callable[[str, dict], Awaitable[dict]]
+
+# What the user said this turn (set by the voice endpoint), so tools can check the model's reading of it.
+turn_text: contextvars.ContextVar[str] = contextvars.ContextVar("turn_text", default="")
 APPROVAL_TTL = 15 * 60
 
 
@@ -52,8 +57,8 @@ DEFAULT_MODE = "business"
 
 # Tools the model shouldn't see in a given situation, so it can't take the other mode's path.
 _HIDDEN = {
-    ("blank", "oneshot"): {"plan_site", "build_site", "submit_brief", "edit_site", "undo_change", "publish_site", "publication_status"},
-    ("blank", "business"): {"plan_site", "create_site", "edit_site", "undo_change", "publish_site", "publication_status"},
+    ("blank", "oneshot"): {"plan_site", "build_site", "submit_brief", "edit_site", "change_image", "undo_change", "publish_site", "publication_status"},
+    ("blank", "business"): {"plan_site", "create_site", "edit_site", "change_image", "undo_change", "publish_site", "publication_status"},
     ("built", "oneshot"): {"create_site", "submit_brief", "set_mode"},
     ("built", "business"): {"create_site", "submit_brief", "set_mode"},
 }
@@ -245,6 +250,28 @@ async def edit_site(project_id: str, args: dict) -> dict:
     return await jobs.answer_voice(project_id, engine.edit(project_id, instruction))
 
 
+@tool(
+    "change_image",
+    "Swap ONE photo on the site for a new one, without touching anything else. Use it for any request to change, "
+    "replace or swap an image, photo or picture ('change the lion image', 'use a Spider-Man picture here', 'another photo').",
+    {
+        "target": {"type": "string", "description": "Which photo, copied from the user's own words. Use 'this' ONLY if the user said this, that or here."},
+        "new_subject": {"type": "string", "description": "What the new photo should show, 2-5 English words taken from what the user asked for. Empty if they didn't say what it should show."},
+    },
+    ["target"],
+    filler="Finding a new photo for that.",
+)
+async def change_image(project_id: str, args: dict) -> dict:
+    target = str(args.get("target") or "this").strip()
+    said = turn_text.get()
+    # Small models answer "this" whenever something is selected; the user's words decide.
+    if said and re.fullmatch(r"(this|that|here)( (one|image|photo|picture))?", target.lower()) and not re.search(r"\b(this|that|here|these|those)\b", said.lower()):
+        target = said
+    if store.load_meta(project_id)["current"] == 0:
+        return {"status": "failed", "message": "There's no site yet. Let's build it first."}
+    return await jobs.answer_voice(project_id, engine.change_image(project_id, target, str(args.get("new_subject") or "").strip()))
+
+
 @tool("undo_change", "Undo the last change to the website.", filler="Undoing that.")
 async def undo_change(project_id: str, args: dict) -> dict:
     result = await engine.undo(project_id)
@@ -394,6 +421,10 @@ def typed_tool(project_id: str, text: str) -> tuple[str, dict]:
         if words in GO_AHEAD:
             return "build_site", {}
         return "plan_site", {"description": f"{meta['draft']['description']} {text}"}
+    swap = re.match(r"(change|replace|swap|use)\b.*?\b(image|photo|picture|pic)s?\b(?:\s+(?:to|with|for)\s+(?:a|an)?\s*(?P<subject>.+))?", words)
+    if meta["current"] > 0 and swap:
+        target = re.sub(r"^(change|replace|swap|use)\s+|\s*\b(to|with|for)\b.*$", "", words) or "this"
+        return "change_image", {"target": target, "new_subject": (swap.group("subject") or "").strip()}
     if meta["current"] == 0:
         # Typing is already "one request", so one-shot builds it; business plans it for approval.
         if mode(meta) == "oneshot":

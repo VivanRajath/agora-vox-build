@@ -20,6 +20,7 @@ const TIER_LABEL = {
   jnr: "Junior dev",
   snr: "Senior dev",
   repair: "Senior dev (build fix)",
+  photos: "Photo swap",
 };
 const AGENT_LABEL = { fontknight: "Font Knight", copywriter: "Copywriter", critic: "Design critic" };
 const TOOL_LABEL = {

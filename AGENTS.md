@@ -5,8 +5,9 @@
 ```
 Vox (Agora Conversational AI + Murf)  ── agents/vox/SOUL.md, backend/vox_llm.py
 │   Talks to the user, calls tools (backend/vox_tools.py):
-│   plan_site · build_site · edit_site · undo_change · describe_site ·
-│   check_progress · publish_site · publication_status
+│   create_site · submit_brief · set_mode · plan_site · build_site · edit_site ·
+│   change_image · undo_change · describe_site · check_progress · publish_site ·
+│   publication_status
 │
 └── vox-build backend (orchestrator)  ── backend/main.py
     │
@@ -53,7 +54,11 @@ Every builder also gets the shared `DESIGN_PRINCIPLES` in `backend/editor/prompt
 |---|---|---|
 | plan_site | description | `needs_approval` + the spoken plan (brief stored as a draft) |
 | build_site | changes? | `done` / `in_progress` |
+| create_site | description | one-shot mode: builds straight away, `done` / `in_progress` |
+| submit_brief | business_name, what_it_does, target_audience, goal, theme (+ colours, must_haves, tone, location, contact, notes) | business mode: the interview as a report, then `needs_approval` + plan |
+| set_mode | mode (`oneshot` / `business`) | `done` |
 | edit_site | instruction | `done` / `in_progress` / `failed` |
+| change_image | target, new_subject? | swaps one photo in place (no model writes code), `done` / `in_progress` / `failed` with a question |
 | undo_change | none | `done` / `failed` |
 | describe_site | none | `done` + sections in order |
 | check_progress | none | the latest job's state |

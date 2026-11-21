@@ -25,7 +25,7 @@ services:
       - key: ASR_LANGUAGE
         value: en-US
       - key: VOX_LLM_TIER
-        value: jnr
+        value: ""
       - key: TOOL_SECRET
         generateValue: true
       - key: ANTHROPIC_API_KEY

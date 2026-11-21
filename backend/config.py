@@ -123,7 +123,9 @@ DEFAULT_MODELS = {
     "anthropic": {"jnr": "claude-haiku-5-5", "snr": "claude-sonnet-5-5", "architect": "claude-opus-5-5"},
     "openai": {"jnr": "gpt-4.1-mini", "snr": "gpt-4.1", "architect": "gpt-4.1"},
     "gemini": {"jnr": "gemini-2.5-flash", "snr": "gemini-2.5-pro", "architect": "gemini-2.5-pro"},
-    "groq": {"jnr": "qwen/qwen3.8-27b", "snr": "openai/gpt-oss-120b", "architect": "openai/gpt-oss-120b"},
+    # vox: qwen often said "doing it" without calling the tool; gpt-oss-20b calls tools reliably and has
+    # its own per-minute quota, apart from the 120b model the builders use.
+    "groq": {"jnr": "qwen/qwen3.8-27b", "snr": "openai/gpt-oss-120b", "architect": "openai/gpt-oss-120b", "vox": "openai/gpt-oss-20b"},
 }
 
 # Tried in order when a model is rate limited. Groq's per-model token quotas
@@ -146,6 +148,9 @@ def model_for(tier: str) -> str:
     override = os.getenv(f"MODEL_{tier.upper()}")
     if override:
         return override
+    direct = DEFAULT_MODELS.get(LLM_PROVIDER, {}).get(tier)
+    if direct and not (tier == "vox" and os.getenv("VOX_LLM_TIER")):
+        return direct
     if tier in AGENT_TIER:
         return model_for(AGENT_TIER[tier])
     return DEFAULT_MODELS.get(LLM_PROVIDER, {}).get(tier, "")

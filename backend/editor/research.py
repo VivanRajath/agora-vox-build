@@ -136,12 +136,13 @@ def notes_for_prompt(brief_data: dict | None, images: list[dict]) -> str:
 async def _find_one(client: httpx.AsyncClient, images_dir, need: dict) -> dict | None:
     query = str(need["query"]).strip()
     queries = [query] + [q for q in [str(need.get("fallback") or "").strip()] if q and q.lower() != query.lower()]
+    avoid = set(need.get("avoid") or ())  # photo ids already on the page, when swapping one for another
     candidate = None
     for q in queries:
         if llm.pexels_key():
-            candidate = await _search_pexels(client, q)
+            candidate = await _search_pexels(client, q, avoid)
         if not candidate:
-            candidate = await _search_wikimedia(client, q)
+            candidate = await _search_wikimedia(client, q, avoid)
         if candidate:
             break
     if not candidate:
@@ -152,7 +153,7 @@ async def _find_one(client: httpx.AsyncClient, images_dir, need: dict) -> dict |
         return None
     ext = ".png" if "png" in r.headers["content-type"] else ".jpg"
     slot = re.sub(r"[^a-z0-9-]+", "-", str(need.get("slot", "image")).lower()).strip("-") or "image"
-    name = f"{slot}-{hashlib.sha1(candidate['url'].encode()).hexdigest()[:6]}{ext}"
+    name = f"{slot}-{photo_id(candidate['url'])}{ext}"
     (images_dir / name).write_bytes(r.content)
     return {
         "slot": slot,
@@ -163,7 +164,12 @@ async def _find_one(client: httpx.AsyncClient, images_dir, need: dict) -> dict |
     }
 
 
-async def _search_pexels(client: httpx.AsyncClient, query: str) -> dict | None:
+def photo_id(url: str) -> str:
+    """The short id in a saved photo's file name (images/<slot>-<id>.jpg)."""
+    return hashlib.sha1(url.encode()).hexdigest()[:6]
+
+
+async def _search_pexels(client: httpx.AsyncClient, query: str, avoid: set[str] = frozenset()) -> dict | None:
     r = await client.get(
         PEXELS_API,
         params={"query": query, "per_page": 5, "orientation": "landscape"},
@@ -171,14 +177,14 @@ async def _search_pexels(client: httpx.AsyncClient, query: str) -> dict | None:
     )
     if r.status_code != 200:
         return None
-    photos = r.json().get("photos", [])
+    photos = [p for p in r.json().get("photos", []) if photo_id(p["src"]["large2x"]) not in avoid]
     if not photos:
         return None
     photo = photos[0]
     return {"url": photo["src"]["large2x"], "credit": f"Photo by {photo['photographer']} on Pexels", "source": photo["url"]}
 
 
-async def _search_wikimedia(client: httpx.AsyncClient, query: str) -> dict | None:
+async def _search_wikimedia(client: httpx.AsyncClient, query: str, avoid: set[str] = frozenset()) -> dict | None:
     r = await client.get(WIKIMEDIA_API, params={
         "action": "query", "format": "json", "generator": "search",
         "gsrsearch": f"filetype:bitmap {query}", "gsrnamespace": 6, "gsrlimit": 10,
@@ -193,6 +199,8 @@ async def _search_wikimedia(client: httpx.AsyncClient, query: str) -> dict | Non
         title = page.get("title", "").lower()
         width, height = info.get("width", 0), info.get("height", 0)
         if not info.get("thumburl") or info.get("mime") not in ("image/jpeg", "image/png") or width < 800:
+            continue
+        if photo_id(info["thumburl"]) in avoid:
             continue
         if any(word in title for word in SKIP_TITLE_WORDS):
             continue

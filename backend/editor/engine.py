@@ -18,7 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .. import builder, config, events, llm, site_template, store
-from . import copywriter, fontknight, patches, prompts, research
+from . import copywriter, fontknight, images, patches, prompts, research
 from .patches import EditFailed
 from .router import ESCALATION, route
 
@@ -186,6 +186,43 @@ async def edit(project_id: str, instruction: str) -> dict:
             except llm.LLMError as e:
                 return _fail(project_id, instruction, str(e))
         return _fail(project_id, instruction, _short_error(error) or "Could not apply that change")
+
+
+async def change_image(project_id: str, target: str, new_subject: str = "") -> dict:
+    """Swaps one photo: find it from the user's words or click, fetch a new one, change only its path.
+    No model writes code here, so the rest of the site can't change."""
+    instruction = f"Change the {target} photo" + (f" to {new_subject}" if new_subject else "")
+    async with _locks[project_id]:
+        events.publish(project_id, {"type": "job_started", "kind": "image", "instruction": instruction, "tier": "photos"})
+        files = store.read_files(project_id)
+        choice = images.pick(files, target, store.load_meta(project_id).get("selection"))
+        if not choice.slots:
+            return _fail(project_id, instruction, choice.message)
+
+        old_alt = choice.alt
+        subject = new_subject.strip() or old_alt or images.describe(choice.slots[0])
+        old_id = choice.image.rsplit("-", 1)[-1].split(".")[0]
+        slug = re.sub(r"[^a-z0-9]+", "-", (new_subject or "photo").lower()).strip("-")[:24] or "photo"
+        need = {
+            "slot": slug,
+            "query": " ".join(subject.split()[:6]),
+            "fallback": " ".join(subject.split()[-2:]),
+            "alt": new_subject.strip().capitalize() if new_subject.strip() else old_alt,
+            "avoid": [old_id],
+        }
+        found = await research.find_images(project_id, [need])
+        if not found:
+            return _fail(project_id, instruction, f"I couldn't find a photo of {subject}. Try describing it another way")
+        photo = found[0]
+        _publish_research(project_id, None, found)
+        new_files = images.replace(files, choice.slots, photo["path"], photo["alt"] if new_subject.strip() else "")
+        where = f" in {len(choice.slots)} places" if len(choice.slots) > 1 else ""
+        summary = f"Swapped that photo{where} for {'a new one showing ' + new_subject.strip() if new_subject.strip() else 'a different one'}."
+        try:
+            version = await _commit(project_id, new_files, [], summary, instruction, "photos")
+        except EditFailed as e:
+            return _fail(project_id, instruction, str(e))
+        return _done(project_id, version)
 
 
 async def undo(project_id: str) -> dict:

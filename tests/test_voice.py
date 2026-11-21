@@ -290,3 +290,51 @@ def test_background_results_are_announced_once():
     text = voice._announcement(pid, {"type": "job_done", "version": {"summary": "Built the zoo site."}})
     assert "Built the zoo site." in text and pid not in jobs.announce
     assert "live at" in voice._announcement(pid, {"type": "published", "url": "https://ana.github.io/zoo/"})
+
+
+def test_claimed_action_without_tool_gets_one_more_round(monkeypatch):
+    meta = store.create()
+    store.update(meta["id"], current=1)
+    rounds = []
+
+    async def fake_chat(system, messages, tier, tools=None, max_tokens=0, json_mode=False):
+        rounds.append(messages[-1]["content"])
+        if len(rounds) == 1:
+            return llm.Reply("Got it, finding a new photo now.")
+        if messages[-1]["role"] == "tool":
+            return llm.Reply("It will show up in a few seconds.")
+        return llm.Reply("", [llm.ToolCall("t1", "change_image", {"target": "this", "new_subject": "a superhero"})])
+
+    ran = []
+
+    async def fake_run(pid, name, args):
+        ran.append(name)
+        return {"status": "in_progress", "message": "Working on it."}
+
+    monkeypatch.setattr(llm, "chat", fake_chat)
+    monkeypatch.setattr(vox_tools, "run", fake_run)
+    client.post(
+        f"/llm/{meta['id']}/chat/completions",
+        headers={"Authorization": f"Bearer {voice.make_llm_token(meta['id'])}"},
+        json={"stream": True, "messages": [{"role": "user", "content": "use a superhero picture here"}]},
+    )
+    assert ran == ["change_image"] and vox_llm.NUDGE in rounds[1]
+    assert not vox_llm.claims_action("Which photo do you mean?")
+
+
+def test_change_image_trusts_the_users_words_over_a_bare_this(monkeypatch):
+    import asyncio
+    from backend.editor import engine
+    meta = store.create()
+    store.update(meta["id"], current=1)
+    seen = []
+
+    async def fake(pid, target, subject):
+        seen.append(target)
+        return {"ok": True, "message": "Swapped."}
+
+    monkeypatch.setattr(engine, "change_image", fake)
+    for said in ("Can you change the parkour photo?", "change this image"):
+        vox_tools.turn_text.set(said)
+        asyncio.run(vox_tools.TOOLS["change_image"].handler(meta["id"], {"target": "this"}))
+    assert seen == ["Can you change the parkour photo?", "this"]
