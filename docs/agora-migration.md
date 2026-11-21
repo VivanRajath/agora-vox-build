@@ -41,6 +41,9 @@ Sources: Agora `llms.txt` index and the pages below. Where two docs disagree, bo
   configurable, with `FALCON` as the default per Agora.
 - Falcon voice IDs are bare names. The English (India) Falcon voices include Priya, Aarav, Anisha, Nikhil and Pooja.
   The default is `Priya` with locale `en-IN`.
+- Tested against Murf directly (2026-11-21): the stream-input WebSocket returns identical audio for `Priya` and
+  `en-IN-priya`, and for `FALCON` and `falcon-2.1`. Murf's `GET /v1/speech/voices?model=falcon-2.1` lists
+  `en-IN-*` IDs (117 voices). The connection was routed to the `ap-south-1` region, with a concurrency limit of 3.
 - Regional hosts (`in.api.murf.ai`) are documented for HTTP streaming only, not WebSocket, so the default `MURF_WS_URL`
   is the confirmed global URL. Set `wss://in.api.murf.ai/v1/speech/stream-input` to try the India region.
 
