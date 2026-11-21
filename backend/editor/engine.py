@@ -103,10 +103,41 @@ async def plan(project_id: str, description: str) -> dict:
             return _fail(project_id, description, "The researcher couldn't plan the site. Try describing it again")
         spoken = research.spoken_plan(brief)
         store.update(project_id, draft={"description": description, "brief": brief, "spoken": spoken})
-        _publish_research(project_id, brief, [])
+        _publish_research(project_id, brief, [], planning=True)
         events.publish(project_id, {"type": "plan", "brief": _brief_card(brief), "spoken": spoken})
         events.publish(project_id, {"type": "job_planned", "summary": spoken})
         return {"ok": True, "message": spoken, "brief": brief}
+
+
+async def revise(project_id: str, change: str) -> dict:
+    """A change to the plan waiting for approval ("I want Indian bread photos"): added to that plan,
+    everything else kept. Only a change about photos touches the brief (new photo searches); the
+    rest goes to the architect as a requested change. No re-planning, so nothing else drifts."""
+    async with _locks[project_id]:
+        draft = store.load_meta(project_id).get("draft")
+        if not draft:
+            return {"ok": False, "message": "There's no plan yet. Describe the business first."}
+        brief = dict(draft["brief"])
+        changes = list(draft.get("changes") or []) + [change]
+        note = ""
+        if research.wants_images(change):
+            needs = await research.image_needs(change, brief)
+            if needs:
+                kept = [i for i in brief.get("images", []) if isinstance(i, dict) and i.get("slot") not in {n.get("slot") for n in needs}]
+                brief["images"] = (needs + kept)[:6]
+                note = f" Photos: {', '.join(n['query'] for n in needs[:3])}."
+        spoken = f"{draft['spoken']} Plus: {change}."
+        store.update(project_id, draft={**draft, "brief": brief, "changes": changes, "spoken": spoken})
+        _publish_research(project_id, brief, [], planning=True)
+        events.publish(project_id, {"type": "plan", "brief": _brief_card(brief), "spoken": spoken})
+        events.publish(project_id, {"type": "job_planned", "summary": spoken})
+        return {"ok": True, "message": f"Added to the plan: {change}.{note} Everything else stays the same."}
+
+
+def described(draft: dict) -> str:
+    """The plan's description plus every change the user asked for, for the architect."""
+    changes = draft.get("changes") or []
+    return draft["description"] + (" Requested changes (follow these over the plan): " + "; ".join(changes) if changes else "")
 
 
 async def generate(project_id: str, description: str, brief: dict | None = None) -> dict:
@@ -465,14 +496,19 @@ async def _review(project_id: str, files: dict[str, str], brief: dict) -> dict[s
     return reviewed
 
 
-def _publish_research(project_id: str, brief: dict | None, images: list[dict]) -> None:
+def _publish_research(project_id: str, brief: dict | None, images: list[dict], planning: bool = False) -> None:
     parts = []
     if brief:
         sections = [s.get("id", "?") for s in brief.get("sections", []) if isinstance(s, dict)]
         parts.append(f"planned {len(sections)} sections ({', '.join(sections)})")
         if (brief.get("style") or {}).get("direction"):
             parts.append(f"art direction: {brief['style']['direction']}")
-    parts.append(f"found {len(images)} photo{'s' if len(images) != 1 else ''}")
+    if planning:
+        # Photos are fetched when the site is built; at this point they're only search plans.
+        needs = [i.get("query") for i in (brief or {}).get("images", []) if isinstance(i, dict) and i.get("query")]
+        parts.append(f"planned {len(needs)} photo{'s' if len(needs) != 1 else ''}" + (f" ({'; '.join(needs[:4])})" if needs else ""))
+    else:
+        parts.append(f"found {len(images)} photo{'s' if len(images) != 1 else ''}")
     events.publish(project_id, {
         "type": "research_done",
         "summary": "Researcher " + ", ".join(parts),

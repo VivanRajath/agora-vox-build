@@ -30,7 +30,9 @@ call, visit, enquire), 4) the look and feel or theme, and any colours, 5) must-h
 6) location and contact details or opening hours (optional; skip if they don't know).
 Acknowledge each answer in a few words ("Families with kids, got it."). When you have 1 to 4, or the user says "that's all"
 or "just build it", call submit_brief with everything you learned, in English. It returns a plan: read it out and ask
-"Shall I build it, or change anything?". On yes, call build_site. If they want changes, call submit_brief again with them.""",
+"Shall I build it, or change anything?". On yes, call build_site. If they want a change to that plan (photos of X, another
+section, a colour), call revise_plan with just the change: everything else in the plan stays. Only call submit_brief again if
+they describe a completely different business.""",
 }
 
 
@@ -55,7 +57,7 @@ def state(project_id: str) -> str:
         lines.append(f"- The website for {brief.get('business') or 'the user'} is at version {meta['current']}: {version.get('summary', '')}")
     if meta.get("draft"):
         lines.append(
-            f"- A plan is waiting for approval: {meta['draft'].get('spoken', '')}. If the user agrees in ANY language "
+            f"- A plan is waiting for approval: {meta['draft'].get('spoken', '')}. Changes to it go to revise_plan. If the user agrees in ANY language "
             "(yes, ಹೌದು, हाँ, go ahead...), call build_site NOW; never ask again."
         )
     if meta.get("oneshot_pending") and meta["current"] == 0:

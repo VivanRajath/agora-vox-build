@@ -57,10 +57,10 @@ DEFAULT_MODE = "business"
 
 # Tools the model shouldn't see in a given situation, so it can't take the other mode's path.
 _HIDDEN = {
-    ("blank", "oneshot"): {"plan_site", "build_site", "submit_brief", "edit_site", "change_image", "undo_change", "publish_site", "publication_status"},
+    ("blank", "oneshot"): {"plan_site", "build_site", "submit_brief", "revise_plan", "edit_site", "change_image", "undo_change", "publish_site", "publication_status"},
     ("blank", "business"): {"plan_site", "create_site", "edit_site", "change_image", "undo_change", "publish_site", "publication_status"},
-    ("built", "oneshot"): {"create_site", "submit_brief", "set_mode"},
-    ("built", "business"): {"create_site", "submit_brief", "set_mode"},
+    ("built", "oneshot"): {"create_site", "submit_brief", "revise_plan", "set_mode"},
+    ("built", "business"): {"create_site", "submit_brief", "revise_plan", "set_mode"},
 }
 
 
@@ -130,11 +130,29 @@ async def build_site(project_id: str, args: dict) -> dict:
         return {"status": "failed", "message": "There's no approved plan yet. Describe the business and I'll plan it first."}
     changes = str(args.get("changes") or "").strip()
     if changes:
-        # The researcher re-plans with the changes, so the brief lists the new sections too.
-        coro = engine.generate(project_id, f"{draft['description']} Requested changes: {changes}")
-    else:
-        coro = engine.generate(project_id, draft["description"], brief=draft["brief"])
+        # Added to the approved plan (no re-planning, so the colours and sections the user heard stay).
+        await engine.revise(project_id, changes)
+        draft = store.load_meta(project_id)["draft"]
+    coro = engine.generate(project_id, engine.described(draft), brief=draft["brief"])
     return await jobs.answer_voice(project_id, coro)
+
+
+@tool(
+    "revise_plan",
+    "Business mode: the user wants a change to the plan you just read out (more photos of X, another section, a colour). "
+    "Adds the change to that plan and keeps everything else. Read the result out and ask whether to build.",
+    {"change": {"type": "string", "description": "The change, in English, in the user's terms (e.g. 'use photos of Indian breads like naan and paratha')."}},
+    ["change"],
+    filler="Sure, adding that to the plan.",
+)
+async def revise_plan(project_id: str, args: dict) -> dict:
+    change = str(args.get("change") or "").strip()
+    if not change:
+        return {"status": "failed", "message": "What would you like to change in the plan?"}
+    result = await engine.revise(project_id, change)
+    if not result["ok"]:
+        return {"status": "failed", "message": result["message"]}
+    return {"status": "needs_approval", "message": result["message"] + " Shall I build it?"}
 
 
 # ---------------------------------------------------------------------------
@@ -449,7 +467,7 @@ def typed_tool(project_id: str, text: str) -> tuple[str, dict]:
     if meta.get("draft"):
         if words in GO_AHEAD:
             return "build_site", {}
-        return "plan_site", {"description": f"{meta['draft']['description']} {text}"}
+        return "revise_plan", {"change": text}
     swap = re.match(r"(change|replace|swap|use)\b.*?\b(image|photo|picture|pic)s?\b(?:\s+(?:to|with|for)\s+(?:a|an)?\s*(?P<subject>.+))?", words)
     if meta["current"] > 0 and swap:
         target = re.sub(r"^(change|replace|swap|use)\s+|\s*\b(to|with|for)\b.*$", "", words) or "this"

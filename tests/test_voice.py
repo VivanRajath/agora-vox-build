@@ -429,3 +429,27 @@ def test_kannada_yes_builds_the_read_back_site(monkeypatch):
         json={"stream": True, "messages": [{"role": "assistant", "content": "ಮಾಡಲೇ?"}, {"role": "user", "content": "ಹೌದು."}]},
     )
     assert built == ["A bakery website called Aditya Bakery."]
+
+
+def test_revising_a_plan_keeps_it_and_only_updates_photos(monkeypatch):
+    import asyncio
+    from backend.editor import engine, research
+    meta = store.create()
+    brief = {"business": "Aditya Bakery", "palette": {"bg": "#ffffff", "accent": "#c0603c"}, "sections": [{"id": "hero"}],
+             "images": [{"slot": "hero", "query": "bakery shop", "alt": "a bakery"}, {"slot": "about", "query": "baker", "alt": "baker"}]}
+    store.update(meta["id"], draft={"description": "Aditya Bakery", "brief": brief, "spoken": "Rustic, white and terracotta."})
+
+    async def needs(change, b):
+        return [{"slot": "hero", "query": "indian naan paratha bread", "alt": "Indian breads"}]
+
+    async def no_research(*a, **k):
+        raise AssertionError("a change must not re-plan the site")
+
+    monkeypatch.setattr(research, "image_needs", needs)
+    monkeypatch.setattr(research, "brief", no_research)
+    result = asyncio.run(vox_tools.run(meta["id"], "revise_plan", {"change": "use photos of Indian breads"}))
+    assert result["status"] == "needs_approval" and "Indian breads" in result["message"]
+    draft = store.load_meta(meta["id"])["draft"]
+    assert draft["brief"]["palette"] == brief["palette"] and draft["brief"]["sections"] == brief["sections"]
+    assert [i["query"] for i in draft["brief"]["images"]] == ["indian naan paratha bread", "baker"]
+    assert "use photos of Indian breads" in engine.described(draft)

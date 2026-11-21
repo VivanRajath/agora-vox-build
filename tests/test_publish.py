@@ -137,6 +137,6 @@ def test_typed_flow_plans_then_builds(project):
     assert vox_tools.typed_tool(pid, "a bakery in Indiranagar")[0] == "plan_site"
     store.update(pid, draft={"description": "a bakery", "brief": {}, "spoken": "plan"})
     assert vox_tools.typed_tool(pid, "go ahead")[0] == "build_site"
-    name, args = vox_tools.typed_tool(pid, "add a cakes section")
-    assert name == "plan_site" and "cakes" in args["description"]
+    # A change is added to the waiting plan, not re-planned from scratch.
+    assert vox_tools.typed_tool(pid, "add a cakes section") == ("revise_plan", {"change": "add a cakes section"})
     assert vox_tools.typed_tool(pid, "publish")[0] == "publish_site"
