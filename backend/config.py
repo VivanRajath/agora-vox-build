@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from pathlib import Path
 
@@ -76,10 +77,23 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-# Each variable may hold several comma-separated keys; they're rotated on rate limits.
+# Each variable may hold several comma-separated keys, and numbered extras work too
+# (GROQ_API_KEY_1, GROQ_API_KEY_2, ...). They're rotated on rate limits.
+def _env_keys(name: str) -> list[str]:
+    values = [os.getenv(name, "")]
+    values += [v for k, v in sorted(os.environ.items()) if re.fullmatch(rf"{name}_\d+", k)]
+    keys: list[str] = []
+    for value in values:
+        for key in value.split(","):
+            key = key.strip()
+            if key and key not in keys:
+                keys.append(key)
+    return keys
+
+
 ENV_KEYS = {
-    provider: [k.strip() for k in value.split(",") if k.strip()]
-    for provider, value in {"anthropic": ANTHROPIC_API_KEY, "openai": OPENAI_API_KEY, "gemini": GEMINI_API_KEY, "groq": GROQ_API_KEY}.items()
+    provider: _env_keys(f"{provider.upper()}_API_KEY")
+    for provider in ("anthropic", "openai", "gemini", "groq")
 }
 
 # Optional: better stock photos for the researcher (free key at pexels.com/api).
@@ -91,14 +105,9 @@ def _detect_provider() -> str:
     explicit = os.getenv("LLM_PROVIDER", "").strip().lower()
     if explicit:
         return explicit
-    if ANTHROPIC_API_KEY:
-        return "anthropic"
-    if OPENAI_API_KEY:
-        return "openai"
-    if GEMINI_API_KEY:
-        return "gemini"
-    if GROQ_API_KEY:
-        return "groq"
+    for provider in ("anthropic", "openai", "gemini", "groq"):
+        if ENV_KEYS[provider]:
+            return provider
     return "none"
 
 
