@@ -514,3 +514,20 @@ p { margin: 0; }
   .topbar-actions .btn.primary span.label-long { display: none; }
   .topbar-actions .btn.primary span.label-short { display: inline; }
 }
+
+/* Laptops too: during a call the orb sits beside its status line instead of taking 240px, so the
+   activity chat stays visible. If the sidebar still runs out of room it scrolls; the chat never collapses. */
+.orb-wrap { display: grid; grid-template-columns: 64px 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center; padding: 2px 0; text-align: left; }
+.orb-wrap .orb-stage { grid-row: 1 / span 2; width: 64px; height: 64px; }
+.orb-wrap .orb, .orb-wrap .orb-halo { width: 34px; height: 34px; }
+.orb-wrap .orb-ring { width: 50px; height: 50px; }
+.orb-wrap > p { margin: 0; }
+.orb-wrap .orb-label { font-size: 13.5px; }
+.orb-wrap .orb-heard { max-width: none; font-size: 12px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.orb-wrap .notice { grid-column: 1 / -1; }
+@media (min-width: 901px) {
+  .sidebar { overflow-y: auto; }
+  .sidebar .tab-panel { flex: 1 0 auto; min-height: 220px; }
+  .sidebar > .voice, .sidebar > .tabs, .sidebar > .composer { flex: none; }
+  .sidebar > .composer { position: sticky; bottom: 0; z-index: 5; background: var(--surface); }
+}
