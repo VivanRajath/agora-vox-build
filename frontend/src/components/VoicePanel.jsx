@@ -1,4 +1,5 @@
 import { MicIcon, PointerIcon, StopIcon, CloseIcon } from "./icons.jsx";
+import VoiceOrb from "./VoiceOrb.jsx";
 
 const STATUS = {
   idle: "Talk to Vox",
@@ -11,7 +12,7 @@ const STATUS = {
 // Relative bar heights; the live volume scales them.
 const BARS = [0.45, 0.8, 1, 0.65, 0.35];
 
-export default function VoicePanel({ voice, config, aiReady, onOpenSettings, picking, onTogglePick, selection, onClearSelection, isBlank }) {
+export default function VoicePanel({ voice, heard, thinking, config, aiReady, onOpenSettings, picking, onTogglePick, selection, onClearSelection, isBlank }) {
   const live = voice.state === "live";
   const connecting = voice.state === "connecting";
   const voiceReady = config?.voice_enabled;
@@ -19,6 +20,7 @@ export default function VoicePanel({ voice, config, aiReady, onOpenSettings, pic
 
   return (
     <section className="voice" aria-label="Voice">
+      {(live || connecting) && <VoiceOrb voice={voice} heard={heard} thinking={thinking} />}
       <button
         className={`talk ${live ? "is-live" : ""} ${connecting ? "is-connecting" : ""} ${live && voice.speaking ? "is-speaking" : ""}`}
         onClick={live || connecting ? voice.stop : voice.start}

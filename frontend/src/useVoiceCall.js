@@ -31,6 +31,9 @@ export function useVoiceCall(projectId) {
   const session = useRef(null); // { client, mic, agentId }
   const [state, setState] = useState("idle");
   const [volume, setVolume] = useState(0); // the agent's voice, 0..1
+  const [micLevel, setMicLevel] = useState(0); // the user's microphone, 0..1
+  const [micLabel, setMicLabel] = useState("");
+  const [micSilent, setMicSilent] = useState(false); // live for a while and the mic never picked anything up
   const [muted, setMuted] = useState(false);
   const [error, setError] = useState(null);
 
@@ -43,6 +46,8 @@ export function useVoiceCall(projectId) {
     await s.client.leave().catch(() => {});
     if (notify && s.agentId) post("/api/voice/stop", { agent_id: s.agentId }).catch(() => {});
     setVolume(0);
+    setMicLevel(0);
+    setMicSilent(false);
     setMuted(false);
   }, []);
 
@@ -80,7 +85,17 @@ export function useVoiceCall(projectId) {
 
       await client.join(info.app_id, info.channel, info.token, info.uid);
       await client.publish(s.mic);
-      s.meter = setInterval(() => setVolume(s.agentTrack ? s.agentTrack.getVolumeLevel() : 0), 100);
+      setMicLabel(s.mic.getTrackLabel?.() || "");
+      const since = Date.now();
+      let loudest = 0;
+      s.meter = setInterval(() => {
+        const mic = s.mic?.enabled === false ? 0 : s.mic?.getVolumeLevel() || 0;
+        loudest = Math.max(loudest, mic);
+        setMicLevel(mic);
+        setVolume(s.agentTrack ? s.agentTrack.getVolumeLevel() : 0);
+        // Agora can't hear a mic that never registers sound (wrong device, muted in the OS).
+        setMicSilent(Date.now() - since > 8000 && loudest < 0.01);
+      }, 80);
       setState("live");
     } catch (e) {
       await teardown();
@@ -117,5 +132,9 @@ export function useVoiceCall(projectId) {
     };
   }, [projectId, teardown]);
 
-  return { state, volume, muted, error, start, stop, toggleMute, speaking: volume > 0.05 };
+  return {
+    state, volume, micLevel, micLabel, micSilent, muted, error, start, stop, toggleMute,
+    speaking: volume > 0.05,
+    userSpeaking: !muted && micLevel > 0.06,
+  };
 }

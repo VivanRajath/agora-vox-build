@@ -17,6 +17,8 @@
   --error: #a3271d;
   --error-soft: #fbeceb;
   --focus: #2f6fdb;
+  --orb-vox: #6d4cf0;
+  --orb-vox-soft: #ece7fe;
 
   --radius-sm: 6px;
   --radius: 8px;
@@ -44,6 +46,8 @@
     --error: #ff8a80;
     --error-soft: #3a1f1d;
     --focus: #7aa7ff;
+    --orb-vox: #9a83ff;
+    --orb-vox-soft: #2a2442;
     --shadow-pop: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
   }
@@ -404,3 +408,35 @@ p { margin: 0; }
 .live-url svg { flex: none; width: 14px; height: 14px; }
 .live-hint { font-size: 12.5px; color: var(--ink-2); }
 .live-qr { flex: none; width: 120px; height: 120px; border-radius: 8px; background: #fff; padding: 4px; image-rendering: pixelated; }
+
+/* Voice orb: red while you speak, violet while Vox speaks, a spinning ring while it thinks. */
+.orb-wrap { --orb: var(--line-strong); --orb-soft: var(--surface-2); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0 4px; text-align: center; }
+.orb-wrap.is-listening, .orb-wrap.is-connecting, .orb-wrap.is-user, .orb-wrap.is-thinking { --orb: var(--on-air); --orb-soft: var(--on-air-soft); }
+.orb-wrap.is-vox { --orb: var(--orb-vox); --orb-soft: var(--orb-vox-soft); }
+.orb-stage { position: relative; display: grid; place-items: center; width: 132px; height: 132px; }
+.orb-stage > span { position: absolute; border-radius: 50%; }
+.orb {
+  width: 64px; height: 64px;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--orb) 35%, #fff), var(--orb) 62%, color-mix(in srgb, var(--orb) 70%, #000));
+  box-shadow: 0 0 24px color-mix(in srgb, var(--orb) 45%, transparent);
+  transition: transform 0.09s linear, background 0.3s ease, box-shadow 0.3s ease;
+}
+.orb-halo { width: 64px; height: 64px; background: var(--orb-soft); opacity: 0.9; transition: transform 0.12s linear, background 0.3s ease; }
+.orb-ring { width: 92px; height: 92px; border: 2px solid transparent; opacity: 0; transition: opacity 0.2s ease; }
+.orb-wrap.is-listening .orb, .orb-wrap.is-connecting .orb { animation: orb-breathe 2.4s ease-in-out infinite; }
+.orb-wrap.is-connecting .orb { opacity: 0.6; }
+.orb-wrap.is-muted .orb { opacity: 0.45; }
+.orb-wrap.is-thinking .orb-ring {
+  opacity: 1; border-top-color: var(--orb); border-right-color: color-mix(in srgb, var(--orb) 40%, transparent);
+  animation: orb-spin 0.9s linear infinite;
+}
+.orb-label { margin: 2px 0 0; font-size: 14px; font-weight: 600; }
+.orb-heard { margin: 0; max-width: 34ch; font-size: 12.5px; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+.orb-heard q { color: var(--ink-2); }
+.orb-wrap .notice { margin-top: 6px; text-align: left; }
+@keyframes orb-breathe { 50% { transform: scale(1.07); } }
+@keyframes orb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .orb-wrap .orb, .orb-wrap .orb-ring { animation: none !important; }
+  .orb-wrap.is-thinking .orb-ring { border-color: var(--orb); }
+}

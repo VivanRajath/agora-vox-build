@@ -80,6 +80,17 @@ function useProjectId() {
 export default function App() {
   const { projectId, error: projectError } = useProjectId();
   const voice = useVoiceCall(projectId);
+  const [heard, setHeard] = useState(""); // what Vox last heard, for the orb's caption
+  const [thinking, setThinking] = useState(false); // a user turn reached Vox and no reply yet
+  useEffect(() => {
+    if (voice.speaking) setThinking(false);
+  }, [voice.speaking]);
+  useEffect(() => {
+    if (voice.state === "idle") {
+      setHeard("");
+      setThinking(false);
+    }
+  }, [voice.state]);
   const [config, setConfig] = useState(null);
   const [meta, setMeta] = useState(null);
   const [log, setLog] = useState([]);
@@ -215,6 +226,12 @@ export default function App() {
           break;
         case "transcript":
           addLog({ kind: ev.role === "user" ? "user" : "vox", text: ev.text });
+          if (ev.role === "user") {
+            setHeard(ev.text);
+            setThinking(true);
+          } else {
+            setThinking(false);
+          }
           break;
         case "tool":
           addLog({
@@ -351,6 +368,8 @@ export default function App() {
         <aside className="sidebar">
           <VoicePanel
             voice={voice}
+            heard={heard}
+            thinking={thinking}
             config={config}
             aiReady={aiReady}
             onOpenSettings={() => setDialog("settings")}
