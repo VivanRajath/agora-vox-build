@@ -13,7 +13,9 @@ import re
 
 import httpx
 
-from .. import llm, store
+from urllib.parse import urlparse
+
+from .. import config, llm, store
 from . import prompts
 
 log = logging.getLogger("vox-build.research")
@@ -22,6 +24,8 @@ log = logging.getLogger("vox-build.research")
 USER_AGENT = "VoxBuild/1.0 (https://github.com/VivanRajath/vox-build) python-httpx"
 WIKIMEDIA_API = "https://commons.wikimedia.org/w/api.php"
 PEXELS_API = "https://api.pexels.com/v1/search"
+UNSPLASH_API = "https://api.unsplash.com/search/photos"
+UNSPLASH_UTM = "utm_source=vox_build&utm_medium=referral"
 
 IMAGE_WORDS = ("image", "photo", "picture", "pic ", "pics", "gallery", "background", "banner", "illustration")
 SKIP_TITLE_WORDS = ("logo", "map", "diagram", "flag", "chart", "icon", "coat of arms", "seal", "svg", "drawing")
@@ -122,7 +126,7 @@ def notes_for_prompt(brief_data: dict | None, images: list[dict]) -> str:
         lines = [f'- {img["slot"]}: src="{img["path"]}" alt="{img["alt"]}"' for img in images]
         credits = "; ".join(f'{img["credit"]} ({img["source"]})' for img in images)
         parts.append(
-            "Photos found by the researcher. Use these exact relative src paths in the matching places, "
+            "Photos found by the researcher. Use these exact src values in the matching places, "
             "with object-cover so they crop nicely:\n" + "\n".join(lines) +
             f"\nAdd a small, subtle 'Photo credits' line in the footer: {credits}"
         )
@@ -139,7 +143,19 @@ async def _find_one(client: httpx.AsyncClient, images_dir, need: dict) -> dict |
     avoid = set(need.get("avoid") or ())  # photo ids already on the page, when swapping one for another
     candidate = None
     for q in queries:
-        if llm.pexels_key():
+        if config.UNSPLASH_ACCESS_KEY:
+            candidate = await _search_unsplash(client, q, avoid)
+            if candidate:
+                # Unsplash photos are hotlinked (their guideline), and the use is reported.
+                await _report_unsplash_use(client, candidate["download_location"])
+                return {
+                    "slot": re.sub(r"[^a-z0-9-]+", "-", str(need.get("slot", "image")).lower()).strip("-") or "image",
+                    "path": candidate["url"],
+                    "alt": str(need.get("alt") or query),
+                    "credit": candidate["credit"],
+                    "source": candidate["source"],
+                }
+        if not candidate and llm.pexels_key():
             candidate = await _search_pexels(client, q, avoid)
         if not candidate:
             candidate = await _search_wikimedia(client, q, avoid)
@@ -167,6 +183,47 @@ async def _find_one(client: httpx.AsyncClient, images_dir, need: dict) -> dict |
 def photo_id(url: str) -> str:
     """The short id in a saved photo's file name (images/<slot>-<id>.jpg)."""
     return hashlib.sha1(url.encode()).hexdigest()[:6]
+
+
+def photo_key(src: str) -> str:
+    """What identifies a photo on the page, so a swap never picks the same one: the Unsplash photo
+    name ("photo-1546...") for hotlinked photos, the id in the file name for saved ones."""
+    if src.startswith("http"):
+        return urlparse(src).path.rstrip("/").rsplit("/", 1)[-1]
+    return src.rsplit("-", 1)[-1].split(".")[0]
+
+
+async def _search_unsplash(client: httpx.AsyncClient, query: str, avoid: set[str] = frozenset()) -> dict | None:
+    r = await client.get(
+        UNSPLASH_API,
+        params={"query": query, "per_page": 10, "orientation": "landscape", "content_filter": "high"},
+        headers={"Authorization": f"Client-ID {config.UNSPLASH_ACCESS_KEY}", "Accept-Version": "v1"},
+    )
+    if r.status_code != 200:
+        log.info("unsplash search %r: HTTP %s", query, r.status_code)
+        return None
+    for photo in r.json().get("results", []):
+        url = f"{photo['urls']['raw']}&w=1600&q=80&fm=jpg&fit=max"
+        if photo_key(url) in avoid:
+            continue
+        user = photo.get("user") or {}
+        return {
+            "url": url,
+            "credit": f"Photo by {user.get('name') or 'an Unsplash photographer'} on Unsplash",
+            "source": f"{(user.get('links') or {}).get('html', 'https://unsplash.com')}?{UNSPLASH_UTM}",
+            "download_location": (photo.get("links") or {}).get("download_location", ""),
+        }
+    return None
+
+
+async def _report_unsplash_use(client: httpx.AsyncClient, download_location: str) -> None:
+    """Unsplash asks apps to hit download_location when a photo is used on a page."""
+    if not download_location:
+        return
+    try:
+        await client.get(download_location, headers={"Authorization": f"Client-ID {config.UNSPLASH_ACCESS_KEY}"})
+    except httpx.HTTPError as e:
+        log.info("unsplash download report failed: %s", e)
 
 
 async def _search_pexels(client: httpx.AsyncClient, query: str, avoid: set[str] = frozenset()) -> dict | None:

@@ -201,7 +201,7 @@ async def change_image(project_id: str, target: str, new_subject: str = "") -> d
 
         old_alt = choice.alt
         subject = new_subject.strip() or old_alt or images.describe(choice.slots[0])
-        old_id = choice.image.rsplit("-", 1)[-1].split(".")[0]
+        old_id = research.photo_key(choice.image)
         slug = re.sub(r"[^a-z0-9]+", "-", (new_subject or "photo").lower()).strip("-")[:24] or "photo"
         need = {
             "slot": slug,

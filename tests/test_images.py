@@ -41,3 +41,14 @@ def test_replace_changes_only_that_photo_and_its_alt():
     assert "images/tiger-222222.jpg" in out["src/data/site.js"] and "A tiger walking by a stream" in out["src/data/site.js"]
     assert out["src/components/Gallery.jsx"] == FILES["src/components/Gallery.jsx"]
     assert out["src/data/site.js"].replace("lion-999999", "lion-111111").replace("A lioness with cubs", "A male lion resting in the grass") == SITE
+
+
+def test_hotlinked_unsplash_photos_are_found_and_swapped():
+    url = "https://images.unsplash.com/photo-1546182990-dffeafbe841d?ixid=abc&w=1600&q=80&fm=jpg&fit=max"
+    files = {"src/data/site.js": f'export const site = {{ hero: {{ image: "{url}", alt: "A lion at dusk" }} }};'}
+    choice = images.pick(files, "the lion photo", None)
+    assert choice.image == url
+    from backend.editor.research import photo_key
+    assert photo_key(url) == "photo-1546182990-dffeafbe841d"
+    out = images.replace(files, choice.slots, "images/lion-123456.jpg", "")
+    assert '"images/lion-123456.jpg", alt: "A lion at dusk"' in out["src/data/site.js"]

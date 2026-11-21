@@ -7,7 +7,7 @@ src/data/site.js next to their alt text, sometimes straight in a component's src
 import re
 from dataclasses import dataclass, field
 
-IMG_RE = re.compile(r"""(["'`])(images/[\w.\-]+\.(?:jpe?g|png|webp|gif))\1""")
+IMG_RE = re.compile(r"""(["'`])(images/[\w.\-]+\.(?:jpe?g|png|webp|gif)|https://images\.unsplash\.com/[^"'`\s]+)\1""")
 ALT_RE = re.compile(r"""\balt\s*[:=]\s*(["'])(.*?)\1""")
 KEY_RE = re.compile(r"""["']?([a-z][a-z0-9-]*)["']?\s*:\s*\{""")
 ID_RE = re.compile(r"""\bid=["']([a-z0-9-]+)["']""")
@@ -123,7 +123,9 @@ def _kebab(name: str) -> str:
 
 
 def describe(slot: Slot) -> str:
-    return slot.alt or slot.image.split("/")[-1].rsplit("-", 1)[0].replace("-", " ")
+    if slot.alt or slot.image.startswith("http"):
+        return slot.alt or "a photo"
+    return slot.image.split("/")[-1].rsplit("-", 1)[0].replace("-", " ")
 
 
 def pick(files: dict[str, str], target: str, selection: dict | None) -> Choice:
@@ -136,7 +138,9 @@ def pick(files: dict[str, str], target: str, selection: dict | None) -> Choice:
         if not selection:
             return Choice(message="Click the photo on the page first, then ask me again.")
         src = re.search(r"""src=["']([^"']+)""", selection.get("html", ""))
-        image = src.group(1).split("?")[0] if src else ""
+        image = src.group(1).replace("&amp;", "&") if src else ""
+        if not image.startswith("http"):
+            image = image.split("?")[0]
         if image.startswith("./"):
             image = image[2:]
         chosen = [s for s in slots if s.image == image]
@@ -153,7 +157,7 @@ def pick(files: dict[str, str], target: str, selection: dict | None) -> Choice:
     words = _words(target)
     scored = []
     for s in slots:
-        haystack = _words(f"{s.alt} {s.context} {s.section} {s.image}")
+        haystack = _words(f"{s.alt} {s.context} {s.section} {'' if s.image.startswith('http') else s.image}")
         scored.append((len(words & haystack), s))
     best = max(score for score, _ in scored)
     if best == 0:

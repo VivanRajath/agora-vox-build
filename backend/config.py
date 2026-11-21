@@ -104,6 +104,9 @@ ENV_KEYS = {
 # Optional: better stock photos for the researcher (free key at pexels.com/api).
 # Without it, photos come from Wikimedia Commons.
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+# Optional: Unsplash (tried first). Only the access key is used. Photos are hotlinked from
+# images.unsplash.com and each use is reported to Unsplash, as their API guidelines require.
+UNSPLASH_ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY", "")
 
 
 def _detect_provider() -> str:

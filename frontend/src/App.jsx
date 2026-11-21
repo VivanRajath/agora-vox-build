@@ -154,7 +154,7 @@ export default function App() {
             kind: "research",
             text: ev.summary,
             palette: ev.palette,
-            images: (ev.images || []).map((img) => ({ ...img, src: `/preview/${projectId}/${img.path}` })),
+            images: (ev.images || []).map((img) => ({ ...img, src: img.path.startsWith("http") ? img.path : `/preview/${projectId}/${img.path}` })),
           });
           break;
         case "agent_note":

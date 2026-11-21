@@ -148,7 +148,8 @@ cd frontend && npm run dev        # http://localhost:5173, proxies to :8000
 | `TOOL_SECRET` | Signs the per-session token Agora sends to `/llm` (bound to the project, expires after 4 hours) |
 | `TOOL_SYNC_WAIT` | Seconds a tool waits for a job before answering "working on it" (default 8) |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `GROQ_API_KEY` | Server-wide LLM keys, used after a user's own keys from Settings. Each may hold several comma-separated keys, rotated on rate limits. Force one with `LLM_PROVIDER` |
-| `PEXELS_API_KEY` | Optional. Better stock photos; without it photos come from Wikimedia Commons |
+| `UNSPLASH_ACCESS_KEY` | Optional, tried first. Unsplash photos, hotlinked from images.unsplash.com with credits (Unsplash's API rules). Demo keys allow 50 requests an hour |
+| `PEXELS_API_KEY` | Optional. Better stock photos; without either key photos come from Wikimedia Commons |
 | `MODEL_JNR` / `MODEL_SNR` / `MODEL_ARCHITECT` | Optional per-tier model overrides |
 | `DESIGN_CRITIC` | `0` skips the design critic's review pass |
 | `SESSION_SECRET` | Signs the login cookie and encrypts stored GitHub tokens and user API keys. Auto-generated into `data/.session_secret` if unset |
