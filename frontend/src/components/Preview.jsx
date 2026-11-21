@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api.js";
+import { api, url } from "../api.js";
 import { DesktopIcon, ExternalIcon, PhoneIcon, TabletIcon } from "./icons.jsx";
 
 const DEVICES = {
@@ -13,7 +13,7 @@ export default function Preview({ projectId, version, latest, reloadKey, busy, t
   const scrollY = useRef(0);
   const [device, setDevice] = useState("desktop");
   const [flash, setFlash] = useState(false);
-  const src = `/preview/${projectId}/?v=${version}&r=${reloadKey}`;
+  const src = url(`/preview/${projectId}/?v=${version}&r=${reloadKey}`);
 
   const post = (msg) => frameRef.current?.contentWindow?.postMessage({ source: "vox-build-host", ...msg }, "*");
 
@@ -67,7 +67,7 @@ export default function Preview({ projectId, version, latest, reloadKey, busy, t
             {latest > version ? ` of ${latest}` : ""}
           </span>
         </div>
-        <a className="icon-btn" href={`/preview/${projectId}/`} target="_blank" rel="noreferrer" title="Open in a new tab" aria-label="Open in a new tab">
+        <a className="icon-btn" href={url(`/preview/${projectId}/`)} target="_blank" rel="noreferrer" title="Open in a new tab" aria-label="Open in a new tab">
           <ExternalIcon />
         </a>
       </div>

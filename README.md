@@ -141,10 +141,16 @@ it, and the generated sites are built to read well at 360px with no sideways scr
 - Your laptop: run the server and `cloudflared tunnel --url http://localhost:8000` (or ngrok), set `PUBLIC_BASE_URL` to
   that URL, restart, and open it on the phone.
 
-**Frontend on Vercel:** Vercel can host the React app but not the backend (long builds, project files on disk, live
-event streams and Agora's calls need a long-running server). Run the backend on Render or behind a tunnel as above,
-then in `frontend/vercel.json` replace `YOUR-BACKEND-HOST` with its host name and import the `frontend/` folder as a
-Vercel project. Agora still calls the backend directly (`PUBLIC_BASE_URL`).
+**Frontend on Vercel:** Vercel hosts the React app; the backend runs on your laptop (or Render), because long builds,
+project files on disk, live event streams and Agora's calls need a long-running server. The app calls the backend
+directly:
+
+1. Give the backend a public HTTPS address without a browser warning page (the free ngrok one has one, which breaks
+   the live updates and the preview): `tailscale funnel 8000`, or `cloudflared tunnel --url http://localhost:8000`.
+2. In `.env`: `PUBLIC_BASE_URL=<that address>` and `FRONTEND_ORIGINS=https://<your-app>.vercel.app`
+   (`*` works as a wildcard, e.g. `https://vox-build*.vercel.app` for preview deployments). Restart the server.
+3. On Vercel, import the repo with **Root Directory** `frontend` and set the environment variable
+   `VITE_API_BASE=<the backend address>`. Deploy, and open the Vercel URL on the phone.
 
 ## Steering the agents
 

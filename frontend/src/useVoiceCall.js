@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { url } from "./api.js";
 
 // The SDK is large, so it loads on demand (prefetched once a project is open).
 let sdk = null;
@@ -48,7 +49,7 @@ function friendly(e) {
 }
 
 async function post(path, body) {
-  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const res = await fetch(url(path), { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
   return data;
@@ -156,7 +157,7 @@ export function useVoiceCall(projectId) {
     if (projectId) loadAgora().catch(() => {});
     const onUnload = () => {
       const agentId = session.current?.agentId;
-      if (agentId) navigator.sendBeacon("/api/voice/stop", new Blob([JSON.stringify({ agent_id: agentId })], { type: "application/json" }));
+      if (agentId) navigator.sendBeacon(url("/api/voice/stop"), new Blob([JSON.stringify({ agent_id: agentId })], { type: "text/plain" }));
     };
     window.addEventListener("pagehide", onUnload);
     return () => {

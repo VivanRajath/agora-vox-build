@@ -1,6 +1,10 @@
+export const BACKEND = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+export const url = (path) => BACKEND + path;
+
 async function request(path, options = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(url(path), {
     ...options,
+    credentials: "include", // the session cookie, also when the app is on another site (Vercel)
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   if (!res.ok) {
@@ -23,13 +27,13 @@ export const api = {
   stop: (id) => request(`/api/projects/${id}/stop`, { method: "POST" }),
   setMode: (id, mode) => request(`/api/projects/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
   publish: (id, body) => request(`/api/projects/${id}/publish`, { method: "POST", body: JSON.stringify(body) }),
-  downloadUrl: (id) => `/api/projects/${id}/download`,
+  downloadUrl: (id) => url(`/api/projects/${id}/download`),
   pushGithub: (id, repo, isPrivate) =>
     request(`/api/projects/${id}/github`, { method: "POST", body: JSON.stringify({ repo, private: isPrivate }) }),
 
   me: () => request("/api/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
-  loginUrl: (provider) => `/auth/${provider}/login?next=${encodeURIComponent(location.pathname + location.search)}`,
+  loginUrl: (provider) => url(`/auth/${provider}/login?next=${encodeURIComponent(location.pathname + location.search)}`),
   settings: () => request("/api/settings"),
   addKey: (key) => request("/api/settings/keys", { method: "POST", body: JSON.stringify(key) }),
   removeKey: (id) => request(`/api/settings/keys/${id}`, { method: "DELETE" }),

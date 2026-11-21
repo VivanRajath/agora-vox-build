@@ -78,6 +78,9 @@ TOOL_SECRET = os.getenv("TOOL_SECRET", "") or SESSION_SECRET
 
 # Public https URL Agora's cloud uses to reach /llm. Render sets RENDER_EXTERNAL_URL itself.
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
+# When the app is hosted elsewhere (Vercel) and calls this backend directly: its address(es), comma separated.
+# "*" works as a wildcard, e.g. https://vox-build*.vercel.app for preview deployments too.
+FRONTEND_ORIGINS = [o.strip().rstrip("/") for o in os.getenv("FRONTEND_ORIGINS", "").split(",") if o.strip()]
 
 # How long a voice tool call waits for an edit before answering
 # "still working" and letting the edit finish in the background.

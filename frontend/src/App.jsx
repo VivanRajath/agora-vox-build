@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api.js";
+import { api, url } from "./api.js";
 import { useVoiceCall } from "./useVoiceCall.js";
 import Preview from "./components/Preview.jsx";
 import VoicePanel from "./components/VoicePanel.jsx";
@@ -139,7 +139,7 @@ export default function App() {
       setSelection(m.selection);
     });
 
-    const source = new EventSource(`/api/projects/${projectId}/events`);
+    const source = new EventSource(url(`/api/projects/${projectId}/events`), { withCredentials: true });
     source.onmessage = (msg) => {
       const ev = JSON.parse(msg.data);
       switch (ev.type) {
@@ -155,7 +155,7 @@ export default function App() {
             kind: "research",
             text: ev.summary,
             palette: ev.palette,
-            images: (ev.images || []).map((img) => ({ ...img, src: img.path.startsWith("http") ? img.path : `/preview/${projectId}/${img.path}` })),
+            images: (ev.images || []).map((img) => ({ ...img, src: img.path.startsWith("http") ? img.path : url(`/preview/${projectId}/${img.path}`) })),
           });
           break;
         case "agent_note":

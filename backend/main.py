@@ -11,6 +11,7 @@ import io
 import ipaddress
 import logging
 import mimetypes
+import re
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import auth, config, events, github, jobs, llm, steering, store, users, voice, vox_llm, vox_tools
@@ -34,7 +36,22 @@ if not log.handlers:
     log.addHandler(_handler)
     log.setLevel(logging.INFO)
 app = FastAPI(title="Vox Build")
-app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET, session_cookie="vox-build", max_age=30 * 86400, same_site="lax")
+if config.FRONTEND_ORIGINS:
+    # The app runs on another site (Vercel) and calls this backend directly: allow it, with cookies, and
+    # send the session cookie on those cross-site requests (SameSite=None needs HTTPS).
+    _exact = [o for o in config.FRONTEND_ORIGINS if "*" not in o]
+    _wild = [re.escape(o).replace(r"\*", "[a-z0-9-]*") for o in config.FRONTEND_ORIGINS if "*" in o]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_exact,
+        allow_origin_regex="^(" + "|".join(_wild) + ")$" if _wild else None,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET, session_cookie="vox-build", max_age=30 * 86400, same_site="none", https_only=True)
+else:
+    app.add_middleware(SessionMiddleware, secret_key=config.SESSION_SECRET, session_cookie="vox-build", max_age=30 * 86400, same_site="lax")
 app.include_router(auth.router)
 app.include_router(voice.router)
 app.include_router(vox_llm.router)
