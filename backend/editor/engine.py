@@ -377,6 +377,11 @@ async def _commit(project_id: str, files: dict[str, str], deleted: list[str], su
         events.publish(project_id, {"type": "tool", "name": "build", "status": "failed", "message": _short_error(result.errors), "tier": tier})
         raise EditFailed(f"The build failed:\n{result.errors}")
     events.publish(project_id, {"type": "tool", "name": "build", "status": "done", "message": f"Built in {result.ms} ms"})
+    if result.files:
+        # The builder fixed the source itself (dropped an unknown class from @apply); keep that fix.
+        if changed is not None:
+            changed = sorted(set(changed) | {p for p in result.files if result.files[p] != files.get(p)})
+        files = result.files
     changed_files = {p: t for p, t in files.items() if changed is None or p in changed or p in site_template.FIXED_FILES}
     version = store.commit(project_id, changed_files, summary, instruction, tier, deleted)
     if changed is not None:
@@ -452,7 +457,8 @@ def _break_for_test(before: dict, after: dict) -> dict:
 
 def _short_error(error: str) -> str:
     """First meaningful line of a build error, for logs and speech."""
-    lines = [l.strip() for l in (error or "").splitlines() if l.strip() and not l.strip().startswith(("│", "╵", "^"))]
+    lines = [l.strip().lstrip("│┌└╵╷^≈ ").strip() for l in (error or "").splitlines()]
+    lines = [l for l in lines if l and l != "Error:" and not l.startswith("tailwindcss v")]
     lines = [l for l in lines if l != "The build failed:"]
     return " ".join(lines[:2])[:240]
 

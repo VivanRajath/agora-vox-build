@@ -37,6 +37,8 @@ class BuildResult:
     out_dir: Path | None = None
     ms: int = 0
     stage: Path | None = field(default=None, repr=False)
+    # Set when the builder fixed the source itself (an unknown class dropped from @apply): commit these.
+    files: dict | None = field(default=None, repr=False)
 
 
 class BuildToolsMissing(RuntimeError):
@@ -99,7 +101,7 @@ def _build_sync(stage: Path, public_dir: Path | None, title: str, fonts_url: str
         return BuildResult(False, _tidy(text, stage), ms=_ms(start), stage=stage)
     code, text = css_code, css_text
     if code != 0 or not (out / "styles.css").is_file():
-        return BuildResult(False, "Tailwind: " + _tidy(text, stage), ms=_ms(start), stage=stage)
+        return BuildResult(False, "Tailwind: " + tailwind_message(_tidy(text, stage)), ms=_ms(start), stage=stage)
     crash = _render_check(stage, env)
     if crash:
         return BuildResult(False, crash, ms=_ms(start), stage=stage)
@@ -170,6 +172,42 @@ def _render_check(stage: Path, env: dict) -> str:
     return f"The page builds but crashes when it renders, so it shows a blank screen:\n{first}\n{where}".strip()
 
 
+BOX_CHARS = "│┌└╵╷─┐┘├┤^≈"
+UNKNOWN_APPLY_RE = re.compile(r"Cannot apply unknown utility class `([^`]+)`")
+
+
+def tailwind_message(text: str) -> str:
+    """Tailwind prints its real error inside a box ("│ Error: Cannot apply unknown utility class `x`")
+    after a version banner; keep the message, drop the decoration."""
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip().lstrip(BOX_CHARS).strip()
+        if not line or line.startswith("tailwindcss v") or line == "Error:":
+            continue
+        lines.append(line.removeprefix("Error: "))
+    return "\n".join(dict.fromkeys(lines))[:600] or text[:600]
+
+
+def drop_unknown_apply(files: dict[str, str], utility: str) -> dict[str, str] | None:
+    """Removes a class Tailwind doesn't know from every @apply (with any variant, e.g. hover:x).
+    None when it wasn't found, so the caller doesn't loop."""
+    out, changed = dict(files), False
+    rule = re.compile(r"@apply\s+([^;]*);")
+
+    def fix(m: re.Match) -> str:
+        nonlocal changed
+        kept = [t for t in m.group(1).split() if t != utility and not t.endswith(":" + utility) and t.lstrip("!") != utility]
+        if len(kept) == len(m.group(1).split()):
+            return m.group(0)
+        changed = True
+        return f"@apply {' '.join(kept)};" if kept else ""
+
+    for path, text in files.items():
+        if path.endswith(".css") and "@apply" in text:
+            out[path] = rule.sub(fix, text)
+    return out if changed else None
+
+
 def _tidy(text: str, stage: Path) -> str:
     """Error text for the next developer: stage paths stripped, kept short."""
     text = text.replace(str(stage) + os.sep, "").replace(str(stage), "").replace("\\", "/")
@@ -180,7 +218,7 @@ def _ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
 
-async def build(files: dict[str, str], work_dir: Path, public_dir: Path | None, title: str, fonts_url: str) -> BuildResult:
+async def build(files: dict[str, str], work_dir: Path, public_dir: Path | None, title: str, fonts_url: str, _fixes: int = 0) -> BuildResult:
     """Builds a full set of source files in a fresh staging folder under work_dir.
 
     The caller promotes result.out_dir on success and must call discard(result) either way."""
@@ -198,6 +236,16 @@ async def build(files: dict[str, str], work_dir: Path, public_dir: Path | None, 
         result = await asyncio.to_thread(_build_sync, stage, public_dir, title, fonts_url)
     except subprocess.TimeoutExpired:
         result = BuildResult(False, "the build timed out", stage=stage)
+    unknown = UNKNOWN_APPLY_RE.search(result.errors or "") if not result.ok else None
+    fixed = drop_unknown_apply(files, unknown.group(1)) if unknown and _fixes < 4 else None
+    if fixed is not None:
+        # "@apply bg-brand" with no --color-brand: drop that one class instead of failing the whole site.
+        log.info("dropping unknown utility %r from @apply and rebuilding", unknown.group(1))
+        result.stage = stage
+        discard(result)
+        result = await build(fixed, work_dir, public_dir, title, fonts_url, _fixes=_fixes + 1)
+        result.files = result.files or fixed
+        return result
     if result.ok:
         log.info("build ok in %d ms", result.ms)
     else:

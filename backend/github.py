@@ -1,9 +1,4 @@
-"""GitHub: pushes a site as one commit per branch (Git Data API) and serves it with Pages.
 
-The repo is created if it doesn't exist. Each push makes a branch match the
-files exactly: blobs -> tree (no base) -> commit -> move ref. publish.py pushes
-the source to the default branch and the built site to gh-pages.
-"""
 import asyncio
 import base64
 import re

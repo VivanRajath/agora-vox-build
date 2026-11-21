@@ -310,3 +310,28 @@ def test_a_page_that_crashes_while_rendering_fails_the_build(tmp_path):
     files.update(site_template.fixed_files("Test", ""))
     result = asyncio.run(builder.build(files, tmp_path, None, "Test", ""))
     assert not result.ok and "crashes when it renders" in result.errors and "src/App.jsx" in result.errors
+
+
+def test_tailwind_errors_keep_the_real_message_and_unknown_apply_is_dropped():
+    from backend import builder
+    raw = "≈ tailwindcss v4.3.3\n\nError:\n┌\n│ Error: Cannot apply unknown utility class `bg-brand`\n└"
+    assert builder.tailwind_message(raw) == "Cannot apply unknown utility class `bg-brand`"
+    css = {"src/index.css": '@import "tailwindcss";\n.btn { @apply px-4 bg-brand hover:bg-brand; }\n.tag { @apply bg-brand; }\n'}
+    fixed = builder.drop_unknown_apply(css, "bg-brand")
+    assert fixed["src/index.css"] == '@import "tailwindcss";\n.btn { @apply px-4; }\n.tag {  }\n'
+    assert builder.drop_unknown_apply(fixed, "bg-brand") is None
+
+
+def test_build_drops_an_unknown_apply_class_instead_of_failing(tmp_path):
+    import asyncio
+    from backend import builder, site_template
+    if not builder.tools_ready():
+        import pytest
+        pytest.skip("build tools not installed")
+    files = dict(site_template.STARTER_FILES)
+    files["src/index.css"] = files["src/index.css"] + "\n.btn { @apply px-4 bg-brand; }\n"
+    files.update(site_template.fixed_files("Test", ""))
+    result = asyncio.run(builder.build(files, tmp_path, None, "Test", ""))
+    assert result.ok, result.errors
+    assert "bg-brand" not in result.files["src/index.css"] and "@apply px-4;" in result.files["src/index.css"]
+    builder.discard(result)

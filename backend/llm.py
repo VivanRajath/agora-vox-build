@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
@@ -36,6 +37,8 @@ class LLMTruncated(LLMError):
 # None means the server's .env configuration only.
 _settings: ContextVar[dict | None] = ContextVar("ai_settings", default=None)
 _clients: dict[tuple, object] = {}
+# Output-token caps learned from "must be less than or equal to N" errors, per model.
+_token_caps: dict[str, int] = {}
 
 
 def use_settings(settings: dict | None) -> None:
@@ -261,12 +264,27 @@ async def _complete_openai(
         # With another attempt left, fail over immediately instead of letting the SDK back off.
         attempt = api if last else api.with_options(max_retries=0)
         try:
-            response = await attempt.chat.completions.create(
-                model=candidate,
-                messages=_openai_messages(system, messages),
-                **extra,
-                **_openai_params(provider, candidate, tier, max_tokens, json_mode),
-            )
+            limit = _token_caps.get(candidate, max_tokens)
+            try:
+                response = await attempt.chat.completions.create(
+                    model=candidate,
+                    messages=_openai_messages(system, messages),
+                    **extra,
+                    **_openai_params(provider, candidate, tier, min(max_tokens, limit), json_mode),
+                )
+            except openai.BadRequestError as e:
+                # "max_completion_tokens must be less than or equal to `16384`": a smaller model than the
+                # tier expects (a fallback). Remember its cap and ask again with it.
+                cap = re.search(r"max_completion_tokens.*?less than or equal to `?(\d+)", str(e))
+                if not cap or int(cap.group(1)) >= min(max_tokens, limit):
+                    raise
+                _token_caps[candidate] = int(cap.group(1))
+                response = await attempt.chat.completions.create(
+                    model=candidate,
+                    messages=_openai_messages(system, messages),
+                    **extra,
+                    **_openai_params(provider, candidate, tier, int(cap.group(1)), json_mode),
+                )
             break
         except openai.RateLimitError as e:
             if last:
